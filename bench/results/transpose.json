@@ -1,0 +1,8 @@
+{
+  "cycles": 244,
+  "data_mem_requests": 16,
+  "data_mem_requests_coalesced": 0,
+  "icache_hits": 0,
+  "icache_misses": 32,
+  "threads": 8
+}

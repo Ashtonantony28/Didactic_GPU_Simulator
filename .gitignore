@@ -1,0 +1,8 @@
+build/
+test/logs/
+test/__pycache__/
+test/helpers/__pycache__/
+__pycache__/
+*.pyc
+results.xml
+sim_build/

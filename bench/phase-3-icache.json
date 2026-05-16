@@ -1,0 +1,76 @@
+{
+  "params": "ICACHE_LINES=16",
+  "phase": 3,
+  "results": [
+    {
+      "cycles": 231,
+      "data_mem_requests": 24,
+      "data_mem_requests_coalesced": 0,
+      "icache_hits": 0,
+      "icache_misses": 26,
+      "name": "matadd",
+      "passed": true,
+      "threads": 8
+    },
+    {
+      "cycles": 504,
+      "data_mem_requests": 20,
+      "data_mem_requests_coalesced": 0,
+      "icache_hits": 13,
+      "icache_misses": 28,
+      "name": "matmul",
+      "passed": true,
+      "threads": 4
+    },
+    {
+      "cycles": 231,
+      "data_mem_requests": 24,
+      "data_mem_requests_coalesced": 0,
+      "icache_hits": 0,
+      "icache_misses": 26,
+      "name": "vector_dot",
+      "passed": true,
+      "threads": 8
+    },
+    {
+      "cycles": 164,
+      "data_mem_requests": 16,
+      "data_mem_requests_coalesced": 0,
+      "icache_hits": 0,
+      "icache_misses": 18,
+      "name": "relu",
+      "passed": true,
+      "threads": 8
+    },
+    {
+      "cycles": 327,
+      "data_mem_requests": 24,
+      "data_mem_requests_coalesced": 0,
+      "icache_hits": 0,
+      "icache_misses": 40,
+      "name": "conv1d",
+      "passed": true,
+      "threads": 6
+    },
+    {
+      "cycles": 244,
+      "data_mem_requests": 16,
+      "data_mem_requests_coalesced": 0,
+      "icache_hits": 0,
+      "icache_misses": 32,
+      "name": "transpose",
+      "passed": true,
+      "threads": 8
+    },
+    {
+      "cycles": 288,
+      "data_mem_requests": 16,
+      "data_mem_requests_coalesced": 0,
+      "icache_hits": 0,
+      "icache_misses": 40,
+      "name": "divergent_relu",
+      "passed": true,
+      "threads": 8
+    }
+  ]
+}

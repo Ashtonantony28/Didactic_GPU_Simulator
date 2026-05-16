@@ -63,7 +63,9 @@ def main() -> int:
         coal   = m.get("data_mem_requests_coalesced", "?")
         ihits  = m.get("icache_hits", "?")
         imiss  = m.get("icache_misses", "?")
-        print(f"  [{marker}] {t:18s} cycles={cycles}  mem_req={mreqs}  coal={coal}  icache hit/miss={ihits}/{imiss}")
+        dhits  = m.get("dcache_hits", "?")
+        dmiss  = m.get("dcache_misses", "?")
+        print(f"  [{marker}] {t:18s} cycles={cycles}  mem_req={mreqs}  coal={coal}  ic={ihits}/{imiss}  dc={dhits}/{dmiss}")
         rollup["results"].append(m)
         if not m.get("passed"):
             fails += 1

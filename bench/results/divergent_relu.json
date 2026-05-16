@@ -2,6 +2,8 @@
   "cycles": 288,
   "data_mem_requests": 16,
   "data_mem_requests_coalesced": 0,
+  "dcache_hits": 0,
+  "dcache_misses": 0,
   "icache_hits": 0,
   "icache_misses": 40,
   "threads": 8

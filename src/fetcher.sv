@@ -28,7 +28,7 @@ module fetcher #(
     output reg  [31:0]                       icache_misses
 );
     localparam [2:0] IDLE = 3'b000, FETCHING = 3'b001, FETCHED = 3'b010;
-    localparam [2:0] CORE_FETCH = 3'b001, CORE_DECODE = 3'b010;
+    localparam [2:0] CORE_FETCH = 3'b001, CORE_DECODE = 3'b010, CORE_REQUEST = 3'b011;
 
     // 1-cycle pulse: a fetch was initiated this cycle.
     reg fetch_initiated;
@@ -69,7 +69,9 @@ module fetcher #(
                             instruction    <= mem_read_data;
                             mem_read_valid <= 0;
                         end
-                        FETCHED: if (core_state == CORE_DECODE) fetcher_state <= IDLE;
+                        // Move out of FETCHED when the scheduler advances past FETCH.
+                        // In pipelined mode the scheduler skips DECODE → REQUEST.
+                        FETCHED: if (core_state == CORE_DECODE || core_state == CORE_REQUEST) fetcher_state <= IDLE;
                         default: ;
                     endcase
                 end
@@ -128,7 +130,9 @@ module fetcher #(
                             tag_arr[idx]   <= tag;
                             data_arr[idx]  <= mem_read_data;
                         end
-                        FETCHED: if (core_state == CORE_DECODE) fetcher_state <= IDLE;
+                        // Move out of FETCHED when the scheduler advances past FETCH.
+                        // In pipelined mode the scheduler skips DECODE → REQUEST.
+                        FETCHED: if (core_state == CORE_DECODE || core_state == CORE_REQUEST) fetcher_state <= IDLE;
                         default: ;
                     endcase
                 end

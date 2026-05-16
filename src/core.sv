@@ -3,14 +3,16 @@
 
 // Compute Core
 // One block at a time. One fetcher/decoder/scheduler shared across THREADS_PER_BLOCK
-// ALU/LSU/registers/PC lanes.
+// ALU/LSU/registers/PC lanes. Per-block shared memory (Phase 7) is instantiated here.
 module core #(
     parameter DATA_MEM_ADDR_BITS    = 8,
     parameter DATA_MEM_DATA_BITS    = 8,
     parameter PROGRAM_MEM_ADDR_BITS = 8,
     parameter PROGRAM_MEM_DATA_BITS = 16,
     parameter THREADS_PER_BLOCK     = 4,
-    parameter ICACHE_LINES          = 0
+    parameter ICACHE_LINES          = 0,
+    parameter SMEM_SIZE             = 64,
+    parameter PIPELINED             = 0
 ) (
     input  wire                              clk,
     input  wire                              reset,
@@ -57,6 +59,15 @@ module core #(
     wire        decoded_nzp_write_enable;
     wire [1:0]  decoded_reg_input_mux, decoded_alu_arithmetic_mux;
     wire        decoded_alu_output_mux, decoded_pc_mux, decoded_ret;
+    wire        decoded_smem_read_enable, decoded_smem_write_enable, decoded_bar;
+
+    // Shared memory wires
+    wire [THREADS_PER_BLOCK-1:0] smem_read_enable_v;
+    wire [THREADS_PER_BLOCK-1:0] smem_write_enable_v;
+    wire [7:0] smem_read_address  [THREADS_PER_BLOCK-1:0];
+    wire [7:0] smem_read_data     [THREADS_PER_BLOCK-1:0];
+    wire [7:0] smem_write_address [THREADS_PER_BLOCK-1:0];
+    wire [7:0] smem_write_data    [THREADS_PER_BLOCK-1:0];
 
     fetcher #(
         .PROGRAM_MEM_ADDR_BITS(PROGRAM_MEM_ADDR_BITS),
@@ -91,20 +102,42 @@ module core #(
         .decoded_alu_arithmetic_mux(decoded_alu_arithmetic_mux),
         .decoded_alu_output_mux(decoded_alu_output_mux),
         .decoded_pc_mux(decoded_pc_mux),
-        .decoded_ret(decoded_ret)
+        .decoded_ret(decoded_ret),
+        .decoded_smem_read_enable(decoded_smem_read_enable),
+        .decoded_smem_write_enable(decoded_smem_write_enable),
+        .decoded_bar(decoded_bar)
     );
 
     scheduler #(
-        .THREADS_PER_BLOCK(THREADS_PER_BLOCK)
+        .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
+        .PIPELINED(PIPELINED)
     ) scheduler_instance (
         .clk(clk), .reset(reset), .start(start),
         .decoded_mem_read_enable(decoded_mem_read_enable),
         .decoded_mem_write_enable(decoded_mem_write_enable),
+        .decoded_smem_read_enable(decoded_smem_read_enable),
+        .decoded_smem_write_enable(decoded_smem_write_enable),
+        .decoded_bar(decoded_bar),
         .decoded_ret(decoded_ret),
         .fetcher_state(fetcher_state),
         .lsu_state(lsu_state),
         .current_pc(current_pc), .next_pc(next_pc),
         .core_state(core_state), .done(done)
+    );
+
+    shared_memory #(
+        .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
+        .SIZE(SMEM_SIZE),
+        .ADDR_BITS(8),
+        .DATA_BITS(DATA_MEM_DATA_BITS)
+    ) smem_instance (
+        .clk(clk), .reset(reset),
+        .lane_read_enable(smem_read_enable_v),
+        .lane_read_addr(smem_read_address),
+        .lane_read_data(smem_read_data),
+        .lane_write_enable(smem_write_enable_v),
+        .lane_write_addr(smem_write_address),
+        .lane_write_data(smem_write_data)
     );
 
     genvar i;
@@ -124,6 +157,8 @@ module core #(
                 .core_state(core_state),
                 .decoded_mem_read_enable(decoded_mem_read_enable),
                 .decoded_mem_write_enable(decoded_mem_write_enable),
+                .decoded_smem_read_enable(decoded_smem_read_enable),
+                .decoded_smem_write_enable(decoded_smem_write_enable),
                 .rs(rs[i]), .rt(rt[i]),
                 .mem_read_valid(data_mem_read_valid[i]),
                 .mem_read_address(data_mem_read_address[i]),
@@ -133,6 +168,12 @@ module core #(
                 .mem_write_address(data_mem_write_address[i]),
                 .mem_write_data(data_mem_write_data[i]),
                 .mem_write_ready(data_mem_write_ready[i]),
+                .smem_read_enable(smem_read_enable_v[i]),
+                .smem_read_address(smem_read_address[i]),
+                .smem_read_data(smem_read_data[i]),
+                .smem_write_enable(smem_write_enable_v[i]),
+                .smem_write_address(smem_write_address[i]),
+                .smem_write_data(smem_write_data[i]),
                 .lsu_state(lsu_state[i]),
                 .lsu_out(lsu_out[i])
             );

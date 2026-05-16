@@ -2,7 +2,9 @@
 `timescale 1ns/1ns
 
 // Load-Store Unit
-// One per thread. Async memory request → wait → done handshake.
+// One per thread. Async global memory request → wait → done handshake.
+// Also handles per-block shared-memory access (Phase 7) via a separate port.
+// At decode time at most one of {global, shared} is enabled — they share the FSM.
 module lsu (
     input  wire        clk,
     input  wire        reset,
@@ -10,9 +12,12 @@ module lsu (
     input  wire [2:0]  core_state,
     input  wire        decoded_mem_read_enable,
     input  wire        decoded_mem_write_enable,
+    input  wire        decoded_smem_read_enable,
+    input  wire        decoded_smem_write_enable,
     input  wire [7:0]  rs,
     input  wire [7:0]  rt,
 
+    // Global memory
     output reg         mem_read_valid,
     output reg  [7:0]  mem_read_address,
     input  wire        mem_read_ready,
@@ -22,6 +27,14 @@ module lsu (
     output reg  [7:0]  mem_write_data,
     input  wire        mem_write_ready,
 
+    // Shared memory (single-cycle)
+    output reg         smem_read_enable,
+    output reg  [7:0]  smem_read_address,
+    input  wire [7:0]  smem_read_data,
+    output reg         smem_write_enable,
+    output reg  [7:0]  smem_write_address,
+    output reg  [7:0]  smem_write_data,
+
     output reg  [1:0]  lsu_state,
     output reg  [7:0]  lsu_out
 );
@@ -30,14 +43,20 @@ module lsu (
 
     always @(posedge clk) begin
         if (reset) begin
-            lsu_state         <= IDLE;
-            lsu_out           <= 0;
-            mem_read_valid    <= 0;
-            mem_read_address  <= 0;
-            mem_write_valid   <= 0;
-            mem_write_address <= 0;
-            mem_write_data    <= 0;
+            lsu_state          <= IDLE;
+            lsu_out            <= 0;
+            mem_read_valid     <= 0;
+            mem_read_address   <= 0;
+            mem_write_valid    <= 0;
+            mem_write_address  <= 0;
+            mem_write_data     <= 0;
+            smem_read_enable   <= 0;
+            smem_read_address  <= 0;
+            smem_write_enable  <= 0;
+            smem_write_address <= 0;
+            smem_write_data    <= 0;
         end else if (enable) begin
+            // GLOBAL READ
             if (decoded_mem_read_enable) begin
                 case (lsu_state)
                     IDLE:       if (core_state == CORE_REQUEST) lsu_state <= REQUESTING;
@@ -54,6 +73,7 @@ module lsu (
                     DONE: if (core_state == CORE_UPDATE) lsu_state <= IDLE;
                 endcase
             end
+            // GLOBAL WRITE
             if (decoded_mem_write_enable) begin
                 case (lsu_state)
                     IDLE:       if (core_state == CORE_REQUEST) lsu_state <= REQUESTING;
@@ -66,6 +86,42 @@ module lsu (
                     WAITING: if (mem_write_ready) begin
                         mem_write_valid <= 0;
                         lsu_state       <= DONE;
+                    end
+                    DONE: if (core_state == CORE_UPDATE) lsu_state <= IDLE;
+                endcase
+            end
+            // SHARED READ (single-cycle SRAM, registered output)
+            // Mirror the global pattern: idle→requesting first, then sample
+            // rs/rt in REQUESTING so the register file has had a cycle to update.
+            if (decoded_smem_read_enable) begin
+                case (lsu_state)
+                    IDLE: if (core_state == CORE_REQUEST) lsu_state <= REQUESTING;
+                    REQUESTING: begin
+                        smem_read_enable  <= 1;
+                        smem_read_address <= rs;
+                        lsu_state         <= WAITING;
+                    end
+                    WAITING: begin
+                        smem_read_enable <= 0;
+                        lsu_out          <= smem_read_data;
+                        lsu_state        <= DONE;
+                    end
+                    DONE: if (core_state == CORE_UPDATE) lsu_state <= IDLE;
+                endcase
+            end
+            // SHARED WRITE
+            if (decoded_smem_write_enable) begin
+                case (lsu_state)
+                    IDLE: if (core_state == CORE_REQUEST) lsu_state <= REQUESTING;
+                    REQUESTING: begin
+                        smem_write_enable  <= 1;
+                        smem_write_address <= rs;
+                        smem_write_data    <= rt;
+                        lsu_state          <= WAITING;
+                    end
+                    WAITING: begin
+                        smem_write_enable <= 0;
+                        lsu_state         <= DONE;
                     end
                     DONE: if (core_state == CORE_UPDATE) lsu_state <= IDLE;
                 endcase

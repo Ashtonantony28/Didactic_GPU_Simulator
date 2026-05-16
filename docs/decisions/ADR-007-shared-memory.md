@@ -1,8 +1,10 @@
 # ADR-007 — Shared memory + barriers (Phase 7)
 
 ## Status
-Designed; RTL skeleton in `src/shared_memory.sv`; not wired into the
-core in this revision.
+Implemented. RTL in `src/shared_memory.sv` is wired through the LSU,
+register file, and decoder. LDS / STS / BAR opcodes are decoded and
+executed. Demonstrated by `test_tiled_matmul` and three `smem_indepth`
+unit tests.
 
 ## Context
 Phase 7 adds per-block SRAM addressable by new opcodes `LDS` / `STS` and
@@ -47,18 +49,28 @@ memory.
 `src/shared_memory.sv` is a single-cycle banked SRAM with one R/W port
 per lane.
 
-## Why not wired
+## How it's wired
 
-Wiring the shared-memory path means:
-- Splitting the LSU into "global" and "shared" sub-LSUs (or adding a
-  selector in the existing one).
-- Adding a second data port to the register file's `rd` writeback.
-- Updating every cycle the scheduler considers `lsu_state` to also
-  consider the shared-memory LSU.
+- **LSU** (`src/lsu.sv`): the same FSM (IDLE→REQUESTING→WAITING→DONE)
+  now handles four mutually-exclusive paths — `decoded_mem_read_enable`
+  (global read), `decoded_mem_write_enable` (global write),
+  `decoded_smem_read_enable` (shared read), `decoded_smem_write_enable`
+  (shared write). The decoder guarantees at most one of these is set.
+  Reads land in `lsu_out` regardless of which path; writeback through
+  the register file looks the same.
+- **Register file** (`src/registers.sv`): a new `SHARED = 2'b11`
+  reg_input_mux value. LDS routes through `lsu_out` like LDR does.
+- **Decoder** (`src/decoder.sv`): three new opcodes plus their
+  control signals (also made fully combinational — see ADR-005).
+- **Core** (`src/core.sv`): instantiates a per-block `shared_memory`
+  with per-lane R/W ports.
+- **`src/shared_memory.sv`**: combinational read, synchronous write
+  (combinational read lets the LSU latch in WAITING state without an
+  extra cycle).
 
-This is ~300 lines of RTL plus its own tests. We chose to ship the
-design (this ADR, `shared_memory.sv`, ISA reservation) rather than a
-half-finished implementation.
+BAR is a no-op in single-warp lockstep — when WARPS_PER_CORE > 1
+(future) it becomes a real barrier wait. The opcode is decoded and
+visible at the scheduler, ready to consume.
 
 ## Tiled matmul kernel (for future)
 

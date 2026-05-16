@@ -1,7 +1,10 @@
 # ADR-008 — Pluggable warp scheduler (Phase 8)
 
 ## Status
-Designed — not wired (depends on multi-warp-per-core, see Phase 4/6/8 prereqs).
+Module implemented and unit-tested. `src/warp_scheduler.sv` + `_tb.sv`
+ship LRR / GTO / GTLRR. Three cocotb tests exercise the
+distinguishing behavior of each policy. Integration into a multi-warp
+core remains the next step.
 
 ## Context
 The Phase 8 deliverable is multiple warp scheduling policies behind a

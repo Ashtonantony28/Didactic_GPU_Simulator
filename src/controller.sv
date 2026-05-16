@@ -7,12 +7,13 @@
 // channel transaction broadcasts its result to every consumer that requested it.
 // (Memory coalescing — Phase 5.)
 module controller #(
-    parameter ADDR_BITS     = 8,
-    parameter DATA_BITS     = 16,
-    parameter NUM_CONSUMERS = 4,
-    parameter NUM_CHANNELS  = 1,
-    parameter WRITE_ENABLE  = 1,
-    parameter COALESCE      = 0
+    parameter ADDR_BITS       = 8,
+    parameter DATA_BITS       = 16,
+    parameter NUM_CONSUMERS   = 4,
+    parameter NUM_CHANNELS    = 1,
+    parameter WRITE_ENABLE    = 1,
+    parameter COALESCE        = 0,
+    parameter PRIORITY_ENABLE = 0
 ) (
     input  wire                          clk,
     input  wire                          reset,
@@ -25,6 +26,9 @@ module controller #(
     input  wire [ADDR_BITS-1:0]          consumer_write_address [NUM_CONSUMERS-1:0],
     input  wire [DATA_BITS-1:0]          consumer_write_data    [NUM_CONSUMERS-1:0],
     output reg  [NUM_CONSUMERS-1:0]      consumer_write_ready,
+
+    // Per-consumer priority bit. Scanned first when PRIORITY_ENABLE=1.
+    input  wire [NUM_CONSUMERS-1:0]      consumer_priority,
 
     output reg  [NUM_CHANNELS-1:0]       mem_read_valid,
     output reg  [ADDR_BITS-1:0]          mem_read_address       [NUM_CHANNELS-1:0],
@@ -54,7 +58,9 @@ module controller #(
     reg [NUM_CONSUMERS-1:0]              channel_coalesce_mask [NUM_CHANNELS-1:0];
 
     integer i, j;
+    integer pass;
     reg     found;
+    reg     can_consider;
 
     always @(posedge clk) begin
         if (reset) begin
@@ -79,8 +85,12 @@ module controller #(
                 case (controller_state[i])
                     IDLE: begin
                         found = 1'b0;
+                        // Two-pass scan when priority is enabled: first only
+                        // high-utility (priority) consumers, then everyone.
+                        for (pass = 0; pass < (PRIORITY_ENABLE ? 2 : 1); pass = pass + 1) begin
                         for (j = 0; j < NUM_CONSUMERS; j = j + 1) begin
-                            if (!found && consumer_read_valid[j] && !channel_serving_consumer[j]) begin
+                            can_consider = !PRIORITY_ENABLE || (pass == 1) || consumer_priority[j];
+                            if (!found && can_consider && consumer_read_valid[j] && !channel_serving_consumer[j]) begin
                                 channel_serving_consumer[j] <= 1'b1;
                                 current_consumer[i]         <= j[$clog2(NUM_CONSUMERS+1)-1:0];
                                 mem_read_valid[i]           <= 1'b1;
@@ -106,7 +116,7 @@ module controller #(
                                 end
                                 found = 1'b1;
                             end
-                            if (WRITE_ENABLE && !found
+                            if (WRITE_ENABLE && !found && can_consider
                                 && consumer_write_valid[j] && !channel_serving_consumer[j]) begin
                                 channel_serving_consumer[j] <= 1'b1;
                                 current_consumer[i]         <= j[$clog2(NUM_CONSUMERS+1)-1:0];
@@ -118,6 +128,7 @@ module controller #(
                                 channel_coalesce_mask[i]    <= ({{(NUM_CONSUMERS-1){1'b0}}, 1'b1} << j);
                                 found = 1'b1;
                             end
+                        end
                         end
                     end
                     READ_WAITING: if (mem_read_ready[i]) begin

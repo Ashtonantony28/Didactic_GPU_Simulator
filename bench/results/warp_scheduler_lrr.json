@@ -1,0 +1,5 @@
+{
+  "cycles": 64,
+  "issues": 64,
+  "policy": "LRR"
+}

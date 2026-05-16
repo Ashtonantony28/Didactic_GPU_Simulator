@@ -2,7 +2,11 @@
 `timescale 1ns/1ns
 
 // Instruction Decoder
-// Maps a 16-bit instruction into per-stage control signals during the DECODE state.
+// Combinational from the 16-bit instruction. The original tiny-gpu registered
+// these on `core_state == DECODE`; making decode combinational lets the
+// pipelined scheduler skip the DECODE state without losing setup time.
+// Behavior is identical for the non-pipelined scheduler — decoded outputs
+// are stable as soon as the instruction is latched into the fetcher.
 module decoder (
     input  wire        clk,
     input  wire        reset,
@@ -21,7 +25,10 @@ module decoder (
     output reg  [1:0]  decoded_alu_arithmetic_mux,
     output reg         decoded_alu_output_mux,
     output reg         decoded_pc_mux,
-    output reg         decoded_ret
+    output reg         decoded_ret,
+    output reg         decoded_smem_read_enable,
+    output reg         decoded_smem_write_enable,
+    output reg         decoded_bar
 );
     localparam [3:0]
         OP_NOP   = 4'b0000,
@@ -34,83 +41,74 @@ module decoder (
         OP_LDR   = 4'b0111,
         OP_STR   = 4'b1000,
         OP_CONST = 4'b1001,
+        OP_LDS   = 4'b1010,
+        OP_STS   = 4'b1011,
+        OP_BAR   = 4'b1100,
         OP_RET   = 4'b1111;
 
-    localparam [2:0] DECODE = 3'b010;
+    always @(*) begin
+        decoded_rd_address         = instruction[11:8];
+        decoded_rs_address         = instruction[7:4];
+        decoded_rt_address         = instruction[3:0];
+        decoded_immediate          = instruction[7:0];
+        decoded_nzp                = instruction[11:9];
 
-    always @(posedge clk) begin
-        if (reset) begin
-            decoded_rd_address         <= 0;
-            decoded_rs_address         <= 0;
-            decoded_rt_address         <= 0;
-            decoded_nzp                <= 0;
-            decoded_immediate          <= 0;
-            decoded_reg_write_enable   <= 0;
-            decoded_mem_read_enable    <= 0;
-            decoded_mem_write_enable   <= 0;
-            decoded_nzp_write_enable   <= 0;
-            decoded_reg_input_mux      <= 0;
-            decoded_alu_arithmetic_mux <= 0;
-            decoded_alu_output_mux     <= 0;
-            decoded_pc_mux             <= 0;
-            decoded_ret                <= 0;
-        end else if (core_state == DECODE) begin
-            decoded_rd_address         <= instruction[11:8];
-            decoded_rs_address         <= instruction[7:4];
-            decoded_rt_address         <= instruction[3:0];
-            decoded_immediate          <= instruction[7:0];
-            decoded_nzp                <= instruction[11:9];
+        decoded_reg_write_enable   = 1'b0;
+        decoded_mem_read_enable    = 1'b0;
+        decoded_mem_write_enable   = 1'b0;
+        decoded_nzp_write_enable   = 1'b0;
+        decoded_reg_input_mux      = 2'b00;
+        decoded_alu_arithmetic_mux = 2'b00;
+        decoded_alu_output_mux     = 1'b0;
+        decoded_pc_mux             = 1'b0;
+        decoded_ret                = 1'b0;
+        decoded_smem_read_enable   = 1'b0;
+        decoded_smem_write_enable  = 1'b0;
+        decoded_bar                = 1'b0;
 
-            decoded_reg_write_enable   <= 0;
-            decoded_mem_read_enable    <= 0;
-            decoded_mem_write_enable   <= 0;
-            decoded_nzp_write_enable   <= 0;
-            decoded_reg_input_mux      <= 0;
-            decoded_alu_arithmetic_mux <= 0;
-            decoded_alu_output_mux     <= 0;
-            decoded_pc_mux             <= 0;
-            decoded_ret                <= 0;
-
-            case (instruction[15:12])
-                OP_NOP: ;
-                OP_BRnzp: decoded_pc_mux <= 1;
-                OP_CMP: begin
-                    decoded_alu_output_mux   <= 1;
-                    decoded_nzp_write_enable <= 1;
-                end
-                OP_ADD: begin
-                    decoded_reg_write_enable   <= 1;
-                    decoded_reg_input_mux      <= 2'b00;
-                    decoded_alu_arithmetic_mux <= 2'b00;
-                end
-                OP_SUB: begin
-                    decoded_reg_write_enable   <= 1;
-                    decoded_reg_input_mux      <= 2'b00;
-                    decoded_alu_arithmetic_mux <= 2'b01;
-                end
-                OP_MUL: begin
-                    decoded_reg_write_enable   <= 1;
-                    decoded_reg_input_mux      <= 2'b00;
-                    decoded_alu_arithmetic_mux <= 2'b10;
-                end
-                OP_DIV: begin
-                    decoded_reg_write_enable   <= 1;
-                    decoded_reg_input_mux      <= 2'b00;
-                    decoded_alu_arithmetic_mux <= 2'b11;
-                end
-                OP_LDR: begin
-                    decoded_reg_write_enable <= 1;
-                    decoded_reg_input_mux    <= 2'b01;
-                    decoded_mem_read_enable  <= 1;
-                end
-                OP_STR: decoded_mem_write_enable <= 1;
-                OP_CONST: begin
-                    decoded_reg_write_enable <= 1;
-                    decoded_reg_input_mux    <= 2'b10;
-                end
-                OP_RET: decoded_ret <= 1;
-                default: ;
-            endcase
-        end
+        case (instruction[15:12])
+            OP_NOP: ;
+            OP_BRnzp: decoded_pc_mux = 1'b1;
+            OP_CMP: begin
+                decoded_alu_output_mux   = 1'b1;
+                decoded_nzp_write_enable = 1'b1;
+            end
+            OP_ADD: begin
+                decoded_reg_write_enable   = 1'b1;
+                decoded_alu_arithmetic_mux = 2'b00;
+            end
+            OP_SUB: begin
+                decoded_reg_write_enable   = 1'b1;
+                decoded_alu_arithmetic_mux = 2'b01;
+            end
+            OP_MUL: begin
+                decoded_reg_write_enable   = 1'b1;
+                decoded_alu_arithmetic_mux = 2'b10;
+            end
+            OP_DIV: begin
+                decoded_reg_write_enable   = 1'b1;
+                decoded_alu_arithmetic_mux = 2'b11;
+            end
+            OP_LDR: begin
+                decoded_reg_write_enable = 1'b1;
+                decoded_reg_input_mux    = 2'b01;
+                decoded_mem_read_enable  = 1'b1;
+            end
+            OP_STR: decoded_mem_write_enable = 1'b1;
+            OP_CONST: begin
+                decoded_reg_write_enable = 1'b1;
+                decoded_reg_input_mux    = 2'b10;
+            end
+            OP_LDS: begin
+                decoded_reg_write_enable  = 1'b1;
+                decoded_reg_input_mux     = 2'b11;
+                decoded_smem_read_enable  = 1'b1;
+            end
+            OP_STS: decoded_smem_write_enable = 1'b1;
+            OP_BAR: decoded_bar = 1'b1;
+            OP_RET: decoded_ret = 1'b1;
+            default: ;
+        endcase
     end
+
 endmodule

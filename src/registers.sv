@@ -24,7 +24,7 @@ module registers #(
     output reg  [7:0]            rs,
     output reg  [7:0]            rt
 );
-    localparam [1:0] ARITH = 2'b00, MEM = 2'b01, CONSTANT = 2'b10;
+    localparam [1:0] ARITH = 2'b00, MEM = 2'b01, CONSTANT = 2'b10, SHARED = 2'b11;
     localparam [2:0] REQUEST = 3'b011, UPDATE = 3'b110;
 
     reg [7:0] registers [15:0];
@@ -49,7 +49,7 @@ module registers #(
                     ARITH:    registers[decoded_rd_address] <= alu_out;
                     MEM:      registers[decoded_rd_address] <= lsu_out;
                     CONSTANT: registers[decoded_rd_address] <= decoded_immediate;
-                    default:  ;
+                    SHARED:   registers[decoded_rd_address] <= lsu_out;
                 endcase
             end
         end

@@ -3,16 +3,20 @@
 
 // Scheduler (control-flow FSM for one block on one core)
 // Stages: IDLE → FETCH → DECODE → REQUEST → WAIT → EXECUTE → UPDATE → (loop or DONE).
-// Per-thread next_pc reduces to a single PC under the no-divergence assumption;
-// divergence handling is layered on by the per-core warp_scheduler in later phases.
+// PIPELINED=1 collapses the dead DECODE state (combinational decoder makes
+// it redundant) — one cycle saved per instruction.
 module scheduler #(
-    parameter THREADS_PER_BLOCK = 4
+    parameter THREADS_PER_BLOCK = 4,
+    parameter PIPELINED         = 0
 ) (
     input  wire        clk,
     input  wire        reset,
     input  wire        start,
     input  wire        decoded_mem_read_enable,
     input  wire        decoded_mem_write_enable,
+    input  wire        decoded_smem_read_enable,
+    input  wire        decoded_smem_write_enable,
+    input  wire        decoded_bar,
     input  wire        decoded_ret,
     input  wire [2:0]  fetcher_state,
     input  wire [1:0]  lsu_state [THREADS_PER_BLOCK-1:0],
@@ -42,7 +46,9 @@ module scheduler #(
         end else begin
             case (core_state)
                 IDLE: if (start) core_state <= FETCH;
-                FETCH: if (fetcher_state == 3'b010) core_state <= DECODE;
+                FETCH: if (fetcher_state == 3'b010) begin
+                    core_state <= (PIPELINED != 0) ? REQUEST : DECODE;
+                end
                 DECODE: core_state <= REQUEST;
                 REQUEST: core_state <= WAIT;
                 WAIT: begin
@@ -59,10 +65,6 @@ module scheduler #(
                         done       <= 1;
                         core_state <= DONE;
                     end else begin
-                        // No divergence: all threads converge on the same next PC.
-                        // Use lane 0 — guaranteed enabled (thread_count >= 1).
-                        // Upstream uses THREADS_PER_BLOCK-1 which freezes when the last
-                        // block has fewer threads than THREADS_PER_BLOCK.
                         current_pc <= next_pc[0];
                         core_state <= FETCH;
                     end

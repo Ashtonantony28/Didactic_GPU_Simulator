@@ -14,7 +14,10 @@ module gpu #(
     parameter NUM_CORES                 = 2,
     parameter THREADS_PER_BLOCK         = 4,
     parameter ICACHE_LINES              = 0,
-    parameter COALESCE                  = 0
+    parameter COALESCE                  = 0,
+    parameter PIPELINED                 = 0,
+    parameter DCACHE_LINES              = 0,
+    parameter MEDIC                     = 0
 ) (
     input  wire                              clk,
     input  wire                              reset,
@@ -43,7 +46,9 @@ module gpu #(
     output wire [31:0]                         data_mem_requests,
     output wire [31:0]                         data_mem_requests_coalesced,
     output wire [31:0]                         icache_hits_total,
-    output wire [31:0]                         icache_misses_total
+    output wire [31:0]                         icache_misses_total,
+    output wire [31:0]                         dcache_hits_total,
+    output wire [31:0]                         dcache_misses_total
 );
     wire [7:0] thread_count;
 
@@ -95,23 +100,90 @@ module gpu #(
         .thread_count(thread_count)
     );
 
+    // L1-D cache layer (Phase 9). When DCACHE_LINES=0 we bypass entirely.
+    wire [NUM_LSUS-1:0]            ctl_read_valid;
+    wire [DATA_MEM_ADDR_BITS-1:0]  ctl_read_address [NUM_LSUS-1:0];
+    wire [NUM_LSUS-1:0]            ctl_read_ready;
+    wire [DATA_MEM_DATA_BITS-1:0]  ctl_read_data    [NUM_LSUS-1:0];
+    wire [NUM_LSUS-1:0]            ctl_write_valid;
+    wire [DATA_MEM_ADDR_BITS-1:0]  ctl_write_address [NUM_LSUS-1:0];
+    wire [DATA_MEM_DATA_BITS-1:0]  ctl_write_data    [NUM_LSUS-1:0];
+    wire [NUM_LSUS-1:0]            ctl_write_ready;
+    wire [31:0]                    dcache_hits_w, dcache_misses_w;
+    wire [NUM_LSUS-1:0]            warp_low_util, warp_high_util;
+
+    generate
+        if (DCACHE_LINES > 0) begin : with_l1d
+            l1d_cache #(
+                .NUM_CONSUMERS(NUM_LSUS),
+                .ADDR_BITS(DATA_MEM_ADDR_BITS),
+                .DATA_BITS(DATA_MEM_DATA_BITS),
+                .LINES(DCACHE_LINES),
+                .MEDIC(MEDIC)
+            ) l1d (
+                .clk(clk), .reset(reset), .telemetry_reset(reset),
+                .consumer_read_valid(lsu_read_valid),
+                .consumer_read_address(lsu_read_address),
+                .consumer_read_ready(lsu_read_ready),
+                .consumer_read_data(lsu_read_data),
+                .consumer_write_valid(lsu_write_valid),
+                .consumer_write_address(lsu_write_address),
+                .consumer_write_data(lsu_write_data),
+                .consumer_write_ready(lsu_write_ready),
+                .mem_read_valid(ctl_read_valid),
+                .mem_read_address(ctl_read_address),
+                .mem_read_ready(ctl_read_ready),
+                .mem_read_data(ctl_read_data),
+                .mem_write_valid(ctl_write_valid),
+                .mem_write_address(ctl_write_address),
+                .mem_write_data(ctl_write_data),
+                .mem_write_ready(ctl_write_ready),
+                .cache_hits_total(dcache_hits_w),
+                .cache_misses_total(dcache_misses_w),
+                .warp_low_utility(warp_low_util),
+                .warp_high_utility(warp_high_util)
+            );
+        end else begin : no_l1d
+            assign ctl_read_valid     = lsu_read_valid;
+            assign lsu_read_ready     = ctl_read_ready;
+            assign ctl_write_valid    = lsu_write_valid;
+            assign lsu_write_ready    = ctl_write_ready;
+            genvar k;
+            for (k = 0; k < NUM_LSUS; k = k + 1) begin : passthru
+                assign ctl_read_address[k]   = lsu_read_address[k];
+                assign lsu_read_data[k]      = ctl_read_data[k];
+                assign ctl_write_address[k]  = lsu_write_address[k];
+                assign ctl_write_data[k]     = lsu_write_data[k];
+            end
+            assign dcache_hits_w   = 32'b0;
+            assign dcache_misses_w = 32'b0;
+            assign warp_low_util   = {NUM_LSUS{1'b0}};
+            assign warp_high_util  = {NUM_LSUS{1'b0}};
+        end
+    endgenerate
+
+    assign dcache_hits_total   = dcache_hits_w;
+    assign dcache_misses_total = dcache_misses_w;
+
     controller #(
         .ADDR_BITS(DATA_MEM_ADDR_BITS),
         .DATA_BITS(DATA_MEM_DATA_BITS),
         .NUM_CONSUMERS(NUM_LSUS),
         .NUM_CHANNELS(DATA_MEM_NUM_CHANNELS),
         .WRITE_ENABLE(1),
-        .COALESCE(COALESCE)
+        .COALESCE(COALESCE),
+        .PRIORITY_ENABLE(MEDIC)
     ) data_memory_controller (
         .clk(clk), .reset(reset),
-        .consumer_read_valid(lsu_read_valid),
-        .consumer_read_address(lsu_read_address),
-        .consumer_read_ready(lsu_read_ready),
-        .consumer_read_data(lsu_read_data),
-        .consumer_write_valid(lsu_write_valid),
-        .consumer_write_address(lsu_write_address),
-        .consumer_write_data(lsu_write_data),
-        .consumer_write_ready(lsu_write_ready),
+        .consumer_read_valid(ctl_read_valid),
+        .consumer_read_address(ctl_read_address),
+        .consumer_read_ready(ctl_read_ready),
+        .consumer_read_data(ctl_read_data),
+        .consumer_write_valid(ctl_write_valid),
+        .consumer_write_address(ctl_write_address),
+        .consumer_write_data(ctl_write_data),
+        .consumer_write_ready(ctl_write_ready),
+        .consumer_priority(warp_high_util),
         .mem_read_valid(data_mem_read_valid),
         .mem_read_address(data_mem_read_address),
         .mem_read_ready(data_mem_read_ready),
@@ -124,13 +196,15 @@ module gpu #(
         .mem_requests_coalesced(data_mem_requests_coalesced)
     );
 
+    wire [NUM_FETCHERS-1:0] zero_priority = '0;
     controller #(
         .ADDR_BITS(PROGRAM_MEM_ADDR_BITS),
         .DATA_BITS(PROGRAM_MEM_DATA_BITS),
         .NUM_CONSUMERS(NUM_FETCHERS),
         .NUM_CHANNELS(PROGRAM_MEM_NUM_CHANNELS),
         .WRITE_ENABLE(0),
-        .COALESCE(0)
+        .COALESCE(0),
+        .PRIORITY_ENABLE(0)
     ) program_memory_controller (
         .clk(clk), .reset(reset),
         .consumer_read_valid(fetcher_read_valid),
@@ -141,6 +215,7 @@ module gpu #(
         .consumer_write_address(zero_write_addr),
         .consumer_write_data(zero_write_data),
         .consumer_write_ready(discard_write_ready),
+        .consumer_priority(zero_priority),
         .mem_read_valid(program_mem_read_valid),
         .mem_read_address(program_mem_read_address),
         .mem_read_ready(program_mem_read_ready),
@@ -202,7 +277,8 @@ module gpu #(
                 .PROGRAM_MEM_ADDR_BITS(PROGRAM_MEM_ADDR_BITS),
                 .PROGRAM_MEM_DATA_BITS(PROGRAM_MEM_DATA_BITS),
                 .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
-                .ICACHE_LINES(ICACHE_LINES)
+                .ICACHE_LINES(ICACHE_LINES),
+                .PIPELINED(PIPELINED)
             ) core_instance (
                 .clk(clk),
                 .reset(core_reset[c]),

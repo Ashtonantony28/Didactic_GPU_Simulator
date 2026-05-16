@@ -1,7 +1,12 @@
 # ADR-009 — MeDiC memory-divergence correction (Phase 9)
 
 ## Status
-Designed — prerequisite is Phase 8 (multi-warp) plus an L1-D cache.
+Implemented. `src/l1d_cache.sv` provides a real direct-mapped L1-D
+with per-lane hit/miss tracking; MeDiC bypass and controller priority
+arbitration are wired and parameterized. Functionally working — the
+opportunity to see MeDiC's *value* depends on inter-warp heterogeneity
+which our single-warp datapath can't yet produce; see "What MeDiC
+needs" below.
 
 ## Context
 
@@ -52,7 +57,15 @@ consumer list.
   cache-friendly).
 - Bench report: L1-D hit-rate per warp; cycle count vs. no-MeDiC baseline.
 
-## Why not wired
+## What MeDiC needs to *help* (rather than just *run*)
 
-Prerequisites (L1-D, multi-warp) aren't in place. Implementing MeDiC
-without them would be a model of MeDiC, not MeDiC itself.
+MeDiC's three mechanisms — characterization, bypass, priority — all
+target *inter-warp heterogeneity*. With a single warp per core, every
+lane sees the same instruction stream and similar memory behavior. The
+mechanisms still run correctly (you can observe the bypass kick in
+when a lane gets classified low-utility), but the *benefit* is zero
+because there's no competing high-utility traffic to favor.
+
+Wiring multi-warp-per-core (ADR-008's open work) unlocks MeDiC's win.
+The L1-D + MeDiC machinery is in place; the workload to exploit it
+isn't yet.

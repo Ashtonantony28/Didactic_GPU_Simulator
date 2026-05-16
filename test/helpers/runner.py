@@ -52,6 +52,8 @@ async def run_kernel(dut, program: List[int], data: List[int], threads: int,
         "data_mem_requests_coalesced": _safe_int(dut.data_mem_requests_coalesced.value),
         "icache_hits": _safe_int(dut.icache_hits_total.value),
         "icache_misses": _safe_int(dut.icache_misses_total.value),
+        "dcache_hits": _safe_int(dut.dcache_hits_total.value),
+        "dcache_misses": _safe_int(dut.dcache_misses_total.value),
     }
     logger.info(f"Kernel finished: {metrics}")
     return metrics, data_memory

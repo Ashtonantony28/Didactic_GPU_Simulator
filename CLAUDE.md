@@ -72,6 +72,18 @@ default. Pass them via `iverilog -Pgpu.NAME=VALUE`:
 | Param           | Phase | Default | Effect                                          |
 |-----------------|-------|---------|-------------------------------------------------|
 | `ICACHE_LINES`  | 3     | `0`     | Per-core direct-mapped I-cache when > 0         |
+| `PIPELINED`     | 4     | `0`     | Combinational decode + skip DECODE state        |
 | `COALESCE`      | 5     | `0`     | Coalesce same-address reads in data memory      |
+| `SMEM_SIZE`     | 7     | `64`    | Per-block shared memory entries                 |
+| `DCACHE_LINES`  | 9     | `0`     | L1-D cache (per-gpu, shared lines, write-through) |
+| `MEDIC`         | 9     | `0`     | MeDiC bypass + priority on top of L1-D          |
 | `NUM_CORES`     | —     | `2`     | Number of compute cores                         |
 | `THREADS_PER_BLOCK` | — | `4`     | Threads per block (lockstep within a core)      |
+
+The warp scheduler (Phase 8) is built as a separate compilation target:
+
+```
+make test_warp_scheduler_lrr     # POLICY=0
+make test_warp_scheduler_gto     # POLICY=1
+make test_warp_scheduler_gtlrr   # POLICY=2
+```

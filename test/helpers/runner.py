@@ -1,6 +1,6 @@
 """Common driver loop + bench stats for kernel tests.
 
-Returns a dict of metrics so each test can persist them into bench/.
+Returns a dict of metrics; bench/run.py sets BENCH_RESULTS=1 to persist them into bench/results/.
 """
 import json
 import os
@@ -60,6 +60,8 @@ async def run_kernel(dut, program: List[int], data: List[int], threads: int,
 
 
 def write_bench_result(name: str, metrics: dict):
+    if not os.environ.get("BENCH_RESULTS"):
+        return
     os.makedirs("bench/results", exist_ok=True)
     path = f"bench/results/{name}.json"
     with open(path, "w") as f:

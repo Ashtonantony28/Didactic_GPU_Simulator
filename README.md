@@ -14,11 +14,12 @@ See [`docs/final-report.md`](docs/final-report.md) for results,
 
 ```bash
 apt-get install -y iverilog
-pip3 install cocotb
+pip3 install cocotb==2.0.1   # 2.1.x breaks the Makefile
 # sv2v 0.0.13 binary into /usr/local/bin/
 
 make test_matadd
 make test_matmul
+make regression                # exits non-zero on any failure
 python3 bench/run.py --phase 5 --label phase-5-coalesce \
     --params "ICACHE_LINES=16 COALESCE=1"
 ```

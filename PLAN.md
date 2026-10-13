@@ -13,7 +13,7 @@ thread and go back to the user.
 
 | ID  | Sub-goal                               | Depends on      | Owner (thread) | Status  | PR |
 |-----|----------------------------------------|-----------------|----------------|---------|----|
-| SG0 | Harness hygiene                        | —               | —              | TODO | — |
+| SG0 | Harness hygiene                        | —               | Harness hygiene (SG0) | DONE | [#2](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/2) |
 | SG1 | Shared interfaces                      | SG0             | —              | TODO | — |
 | SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | —              | TODO | — |
 | SG3 | Quantization + export (M1)             | SG1             | —              | TODO | — |
@@ -85,7 +85,7 @@ Checked on the default branch @ `d37c7d5` (this repo) and nanoGPT Extended @ `03
 - Running the suite at default params overwrites 11 tracked
   `bench/results/*.json` files that were recorded under other params.
 
-All 24 cocotb tests pass at default params with cocotb 2.0.1.
+All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `make harness_selftest` checks the failure gate (SG0).
 
 ## Decisions (defaults; user may override at approval)
 

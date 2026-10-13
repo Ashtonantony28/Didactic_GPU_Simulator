@@ -1,6 +1,6 @@
 # ISA — tiny-gpu-extended
 
-16-bit fixed-width instructions. 11 opcodes. Compatible with upstream
+16-bit fixed-width instructions. 14 opcodes. Compatible with upstream
 [adam-maj/tiny-gpu](https://github.com/adam-maj/tiny-gpu).
 
 ## Register file
@@ -63,14 +63,14 @@ The N flag collapses `>` and unsigned wrap-around (which is upstream's
 matmul kernel's branch predicate). Kept bit-for-bit compatible with
 upstream — see [ADR-001](decisions/ADR-001-deviations.md).
 
-## Designed but not yet wired (Phase 7)
-
-These are reserved opcodes documented for the shared-memory phase:
+## Shared memory (Phase 7)
 
 | Opcode  | Mnemonic | Semantics                                              |
 |---------|----------|--------------------------------------------------------|
-| `1010`  | LDS      | `rd ← SMEM[rs]`  (per-block shared memory load)        |
+| `1010`  | LDS      | `rd ← SMEM[rs]`  (per-core shared memory load)         |
 | `1011`  | STS      | `SMEM[rs] ← rt`                                        |
-| `1100`  | BAR      | barrier: all threads in the block wait at this instr   |
+| `1100`  | BAR      | barrier; a no-op under single-warp lockstep            |
 
+SMEM is `SMEM_SIZE` (default 64) words per core, zeroed on reset; addresses
+are masked to `$clog2(SMEM_SIZE)` bits.
 See [ADR-007](decisions/ADR-007-shared-memory.md) for the design.

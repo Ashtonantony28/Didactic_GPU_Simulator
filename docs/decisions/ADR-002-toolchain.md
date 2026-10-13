@@ -31,6 +31,11 @@ Cocotb 2.x changed two things that matter for porting upstream's tests:
    in `baseline/test/helpers/format.py` is incompatible. We omitted the
    format helper from our `test/` and use a smaller `Memory.display`
    instead.
+4. `vvp` exits 0 even when cocotb fails a test or never starts (2.1.x
+   aborts with "No GPI_USERS specified"), so the version is pinned to
+   2.0.1 and every make target checks `build/results.xml` with
+   `test/helpers/check_results.py`: any failure, or zero tests run, fails
+   the target.
 
 ### sv2v 0.0.13 (downloaded binary)
 

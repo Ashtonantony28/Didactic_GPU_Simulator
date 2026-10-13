@@ -27,13 +27,13 @@ def run_one(name: str, params: str) -> dict | None:
     if not test_file.exists():
         return None
     iv_params = " ".join(f"-Pgpu.{p}" for p in params.split()) if params else ""
-    env = {**os.environ}
+    env = {**os.environ, "BENCH_RESULTS": "1"}
     cmd = ["make", f"test_{name}", f"PARAMS={iv_params}"]
     res = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, env=env)
-    passed = "PASS=1 FAIL=0" in res.stdout
+    passed = res.returncode == 0
     result_file = ROOT / "bench" / "results" / f"{name}.json"
     metrics = {}
-    if result_file.exists():
+    if passed and result_file.exists():
         metrics = json.loads(result_file.read_text())
     metrics["passed"] = passed
     metrics["name"] = name

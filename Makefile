@@ -1,5 +1,5 @@
 # tiny-gpu-extended Makefile
-.PHONY: compile test_% clean bench bench_clean
+.PHONY: compile test_% clean bench bench_clean harness_selftest
 
 SRC := $(wildcard src/*.sv)
 
@@ -8,6 +8,10 @@ PARAMS ?=
 
 export PYGPI_PYTHON_BIN := $(shell which python3)
 export LIBPYTHON_LOC    := $(shell cocotb-config --libpython)
+
+# $(call cocotb,<test module>,<vvp>): run cocotb, fail on any test failure or zero tests run.
+cocotb = rm -f build/results.xml && COCOTB_TEST_MODULES=$(1) COCOTB_RESULTS_FILE=build/results.xml \
+	vvp -M $$(cocotb-config --lib-dir) -m libcocotbvpi_icarus $(2) && python3 test/helpers/check_results.py build/results.xml
 
 build:
 	mkdir -p build test/logs bench/results
@@ -28,27 +32,33 @@ compile_ws: build
 test_warp_scheduler_lrr: WS_PARAMS=-Pwarp_scheduler_tb.POLICY=0
 test_warp_scheduler_lrr: WS_TEST=lrr
 test_warp_scheduler_lrr: compile_ws
-	COCOTB_TEST_MODULES=test.test_warp_scheduler_$(WS_TEST) vvp -M $(shell cocotb-config --lib-dir) -m libcocotbvpi_icarus build/ws.vvp
+	$(call cocotb,test.test_warp_scheduler_$(WS_TEST),build/ws.vvp)
 
 test_warp_scheduler_gto: WS_PARAMS=-Pwarp_scheduler_tb.POLICY=1
 test_warp_scheduler_gto: WS_TEST=gto
 test_warp_scheduler_gto: compile_ws
-	COCOTB_TEST_MODULES=test.test_warp_scheduler_$(WS_TEST) vvp -M $(shell cocotb-config --lib-dir) -m libcocotbvpi_icarus build/ws.vvp
+	$(call cocotb,test.test_warp_scheduler_$(WS_TEST),build/ws.vvp)
 
 test_warp_scheduler_gtlrr: WS_PARAMS=-Pwarp_scheduler_tb.POLICY=2
 test_warp_scheduler_gtlrr: WS_TEST=gtlrr
 test_warp_scheduler_gtlrr: compile_ws
-	COCOTB_TEST_MODULES=test.test_warp_scheduler_$(WS_TEST) vvp -M $(shell cocotb-config --lib-dir) -m libcocotbvpi_icarus build/ws.vvp
+	$(call cocotb,test.test_warp_scheduler_$(WS_TEST),build/ws.vvp)
 
 test_%: compile
-	COCOTB_TEST_MODULES=test.test_$* vvp -M $(shell cocotb-config --lib-dir) -m libcocotbvpi_icarus build/sim.vvp
+	$(call cocotb,test.test_$*,build/sim.vvp)
 
 regression: compile
 	@for t in matadd matmul vector_dot relu conv1d transpose divergent_relu tiled_matmul; do \
-	  test -f test/test_$$t.py || continue; \
 	  echo "=== $$t ==="; \
-	  COCOTB_TEST_MODULES=test.test_$$t vvp -M $$(cocotb-config --lib-dir) -m libcocotbvpi_icarus build/sim.vvp || exit $$?; \
+	  $(call cocotb,test.test_$$t,build/sim.vvp) || exit 1; \
 	done
+
+# A failing test, a module with no tests and a missing module must each fail the target.
+harness_selftest: compile
+	! ($(call cocotb,test.harness_fail,build/sim.vvp))
+	! ($(call cocotb,test.harness_empty,build/sim.vvp))
+	! ($(call cocotb,test.harness_missing,build/sim.vvp))
+	@echo "harness_selftest: OK"
 
 clean:
 	rm -rf build test/logs/*.txt

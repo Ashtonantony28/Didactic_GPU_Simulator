@@ -32,7 +32,7 @@ tiny-gpu-extended/
 ## Toolchain
 
 - Icarus Verilog (iverilog) — `12.0`
-- cocotb 2.x
+- cocotb `2.0.1` (pinned; 2.1.x aborts with "No GPI_USERS specified")
 - sv2v — SystemVerilog → Verilog conversion
 - Python 3 for the bench harness
 

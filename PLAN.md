@@ -30,7 +30,7 @@ SG8 run in order.
 
 ## Facts the plan is built on
 
-Checked on `main` @ `d37c7d5` (this repo) and nanoGPT Extended @ `03dbab8`.
+Checked on the default branch @ `d37c7d5` (this repo) and nanoGPT Extended @ `03dbab8`.
 
 - Datapath is 8-bit: registers, ALU, data words, data addresses
   (`src/registers.sv`, `src/alu.sv`, `src/lsu.sv`). Data memory is 256

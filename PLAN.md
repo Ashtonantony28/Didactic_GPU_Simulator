@@ -13,20 +13,52 @@ thread and go back to the user.
 
 | ID  | Sub-goal                               | Depends on      | Owner (thread) | Status  | PR |
 |-----|----------------------------------------|-----------------|----------------|---------|----|
-| SG0 | Harness hygiene                        | —               | —              | PROPOSED | — |
-| SG1 | Shared interfaces                      | SG0             | —              | PROPOSED | — |
-| SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | —              | PROPOSED | — |
-| SG3 | Quantization + export (M1)             | SG1             | —              | PROPOSED | — |
-| SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | —              | PROPOSED | — |
-| SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | —              | PROPOSED | — |
-| SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | —              | PROPOSED | — |
-| SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | PROPOSED | — |
-| SG8 | Stretch: single attention head (M6)    | SG6             | —              | PROPOSED | — |
-| AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | PROPOSED | — |
+| SG0 | Harness hygiene                        | —               | —              | TODO | — |
+| SG1 | Shared interfaces                      | SG0             | —              | TODO | — |
+| SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | —              | TODO | — |
+| SG3 | Quantization + export (M1)             | SG1             | —              | TODO | — |
+| SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | —              | TODO | — |
+| SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | —              | TODO | — |
+| SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | —              | TODO | — |
+| SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | TODO | — |
+| SG8 | Stretch: single attention head (M6)    | SG6             | —              | TODO | — |
+| AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 Concurrency: at most two build threads at once. SG0 → SG1 → SG2 run
 alone. SG3 may start in parallel with SG2. SG4 ∥ SG5 after SG2. SG6, SG7,
 SG8 run in order.
+
+Approved by the user on 2026-10-13 with the defaults below; build proceeds
+without further approval gates.
+
+## Dispatch protocol
+
+- One thread per sub-goal, branched from the default branch
+  (`claude/complete-markdown-tasks-IG7yf`), one PR per sub-goal.
+- A thread starts by reading this file, sets its row to `IN PROGRESS`
+  with its thread title, and delegates bounded, test-driven tasks to at
+  most one or two subagents at a time.
+- A thread merges its own PR once its Verify command passes from a clean
+  checkout and the full existing suite still passes; it then sets its row
+  to `DONE` with the PR link and any open issues, in that same PR.
+- When a row turns `DONE`, the coordinator starts every sub-goal whose
+  dependencies are all `DONE`, keeping at most two build threads running.
+- Blocked threads set their row to `BLOCKED: <reason>` and report in their
+  own thread.
+
+## Environment setup (every thread)
+
+```bash
+apt-get install -y iverilog                  # 12.0
+pip install cocotb==2.0.1 numpy pytest       # 2.1.x breaks the Makefile
+curl -sSL -o /tmp/sv2v.zip https://github.com/zachjs/sv2v/releases/download/v0.0.13/sv2v-Linux.zip
+python3 -c "import zipfile;zipfile.ZipFile('/tmp/sv2v.zip').extractall('/tmp/sv2v')"
+install /tmp/sv2v/*/sv2v /usr/local/bin/
+git checkout bench/results                   # tests overwrite these until SG0 lands
+```
+
+SG3 additionally needs `pip install torch` (CPU) and a clone of nanoGPT
+Extended at `03dbab8` in `$NANOGPT_DIR`.
 
 ## Facts the plan is built on
 

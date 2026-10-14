@@ -14,7 +14,7 @@ thread and go back to the user.
 | ID  | Sub-goal                               | Depends on      | Owner (thread) | Status  | PR |
 |-----|----------------------------------------|-----------------|----------------|---------|----|
 | SG0 | Harness hygiene                        | —               | Harness hygiene (SG0) | DONE | [#2](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/2) |
-| SG1 | Shared interfaces                      | SG0             | —              | TODO | — |
+| SG1 | Shared interfaces                      | SG0             | Shared interfaces (SG1) | DONE | [#3](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/3) |
 | SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | —              | TODO | — |
 | SG3 | Quantization + export (M1)             | SG1             | —              | TODO | — |
 | SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | —              | TODO | — |
@@ -23,6 +23,8 @@ thread and go back to the user.
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | TODO | — |
 | SG8 | Stretch: single attention head (M6)    | SG6             | —              | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
+
+SG1 open issue: `softmax_lut` rows sum to `one` within T/2 LSB (2 at T=4); SG8's "1 LSB" criterion needs revisiting.
 
 Concurrency: at most two build threads at once. SG0 → SG1 → SG2 run
 alone. SG3 may start in parallel with SG2. SG4 ∥ SG5 after SG2. SG6, SG7,
@@ -115,27 +117,54 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
 
 ## Interface contracts (owned by SG1; frozen once merged)
 
-1. **ISA table** — `xf/isa.py`: opcode map, field layout, `encode()`. Single
-   source for the assembler and `docs/isa.md`.
-2. **Assembler** — `xf/asm.py`: `assemble(text) -> list[int]`, labels for
-   `BRnzp`, `%blockIdx/%blockDim/%threadIdx` aliases. `kernels/*.asm` are
+1. **ISA table** — `xf/isa.py`: `OPCODES` (mnemonic → opcode, operand
+   format, incl. `SRA`/`MAX`), `FIELDS`, `encode(mnem, **fields)`,
+   `decode(word)`. Single source for the assembler and `docs/isa.md`
+   (`xf/tests/test_isa.py` checks the doc table).
+2. **Assembler** — `xf/asm.py`: `assemble(text) -> list[int]`,
+   `disassemble(words)`; labels for `BRnzp`, `%blockIdx/%blockDim/%threadIdx`
+   aliases, `#imm` 0–255, writes to R13–R15 rejected. `kernels/*.asm` are
    the canonical kernel sources.
-3. **Memory image** — `xf/image.py`: JSON
-   `{word_bits, addr_bits, segments: {name: {base, shape, dtype, scale}}, words}`
-   with a deterministic layout allocator. Requant constants (`M`, `s`) live
-   in named segments, so kernels are shape- and scale-generic.
-4. **Golden integer ops** — `xf/golden.py`: `matmul_i8`, `requant`,
-   `swiglu_lut`, `rmsnorm_int`, `residual_add`, `softmax_lut`; pure
-   Python/numpy, semantics identical to the kernels bit for bit.
+3. **Memory image** — `xf/image.py`: `Image(word_bits=32, addr_bits=12)`,
+   `alloc(name, shape, dtype, scale=None, data=None) -> base` (bump
+   allocator in call order), `write`, `read(name, words=None)` (signed),
+   `to_json`/`from_json`. JSON
+   `{word_bits, addr_bits, segments: {name: {base, shape, dtype, scale}}, words}`;
+   dtypes `i8`, `i32`, one element per word, words stored two's complement.
+   Requant constants (`M`, `s`) live in named segments, so kernels are
+   shape- and scale-generic.
+4. **Golden integer ops** — `xf/golden.py`, pure numpy, every intermediate
+   checked to fit int32 (`OverflowError` otherwise), semantics identical to
+   the kernels bit for bit:
+   - `matmul_i8(a, b)` → int32 `a @ b`.
+   - `requant(acc, M, s)` = `clamp((acc*M + 2^(s-1)) >> s, -128, 127)`, no
+     rounding term when `s = 0`, `0 ≤ s ≤ 31`, `>>` arithmetic.
+   - `relu(x)`; `residual_add(a, b, Ma, Mb, s)` = `requant(a*Ma + b*Mb, 1, s)`.
+   - `swiglu_lut(gate, up, silu_lut, M, s)` = `requant(silu_lut[gate+128] * up, M, s)`,
+     256 int8 entries.
+   - `rmsnorm_int(x, w, rsqrt_lut, lut_shift, M, s)`: per row
+     `r = rsqrt_lut[min(Σx² >> lut_shift, len-1)]`,
+     `out = requant(x*w*r, M, s)`; `1/d` and eps are folded into the LUT.
+   - `softmax_lut(scores, exp_lut, one, causal=True)`: `d = s - rowmax`
+     over unmasked j (`j ≤ i`), `e = exp_lut[d+255]` (256 non-negative
+     int32), `p = (e*one + S//2) // S`, masked `p = 0`. Rows sum to `one`
+     within `T/2` LSB.
 5. **Launch driver** — `test/helpers/runner.py::run_launches(dut, image,
-   launches)`: one data memory persisting across launches, reset between
-   launches, per-launch metrics.
+   launches) -> (metrics, data_memory)` with `Launch(program, threads,
+   name="", timeout_cycles=20000)`: one data memory loaded from the image
+   and persisting across launches, GPU reset before each launch, per-launch
+   metrics identical to `run_kernel`'s; rejects an image whose word/address
+   width differs from the DUT bus.
 6. **Build target** — `make test_xf_<name>` compiles with
    `-Pgpu.WORD_BITS=32 -Pgpu.DATA_MEM_DATA_BITS=32 -Pgpu.DATA_MEM_ADDR_BITS=12`
-   (extra `PARAMS` appended) into `build/sim_xf.vvp`; the default build is
-   untouched.
-7. **Fixtures** — `test/fixtures/xf/<case>.json`: image, input, golden int
-   outputs, float reference outputs, tolerance.
+   (extra `PARAMS` appended) into `build/sim_xf.vvp` and runs
+   `test/test_xf_<name>.py`; the default build is untouched. It elaborates
+   once SG2 adds `WORD_BITS`.
+7. **Fixtures** — `xf/fixture.py` `save`/`load`,
+   `test/fixtures/xf/<case>.json`:
+   `{case, image, inputs, golden, reference, tol}`; `inputs` are written
+   into their segments before launch, `golden` (int) and `reference`
+   (float) are keyed by output segment.
 8. **Tolerance** — `|dequant(sim) - torch| ≤ TOL` per element, TOL set in
    SG3 from measured quantization error and recorded here.
 

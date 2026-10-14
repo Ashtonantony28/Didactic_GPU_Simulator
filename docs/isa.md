@@ -74,3 +74,11 @@ upstream — see [ADR-001](decisions/ADR-001-deviations.md).
 SMEM is `SMEM_SIZE` (default 64) words per core, zeroed on reset; addresses
 are masked to `$clog2(SMEM_SIZE)` bits.
 See [ADR-007](decisions/ADR-007-shared-memory.md) for the design.
+
+## Assembler
+
+`xf/isa.py` is the single source for opcodes and field layout; `xf/asm.py`
+assembles `kernels/*.asm` (`python3 -m xf.asm file.asm`). Branches are
+written `BRn`, `BRzp`, `BRnzp`, … with a label or instruction index;
+immediates are `#5` or `#0x80` (0–255). `xf/isa.py` already reserves
+`1101 SRA` and `1110 MAX` (PLAN.md D2); they are not wired in `src/` yet.

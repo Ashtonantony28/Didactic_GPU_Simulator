@@ -1,5 +1,4 @@
 """AUDIT-1 repros, fixed by SG9."""
-import os
 
 import numpy as np
 import pytest
@@ -27,12 +26,8 @@ def test_rmsnorm_matches_reference_on_quiet_rows(x):
 
 
 @pytest.fixture(scope="module")
-def nanogpt():
-    pytest.importorskip("torch")
-    if not os.environ.get("NANOGPT_DIR"):
-        pytest.skip("NANOGPT_DIR not set")
-    img, _, _ = export.export(os.environ["NANOGPT_DIR"])
-    return img, export.build_block(os.environ["NANOGPT_DIR"])
+def nanogpt(nanogpt_dir, blk):
+    return export.export(nanogpt_dir)[0], blk
 
 
 @pytest.mark.parametrize("a", [1.0, 0.5, 0.3, 0.1])

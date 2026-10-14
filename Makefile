@@ -1,5 +1,5 @@
 # tiny-gpu-extended Makefile
-.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf test_all matrix matrix_run clean bench bench_clean harness_selftest
+.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf test_all require_nanogpt matrix matrix_run clean bench bench_clean harness_selftest
 
 SRC := $(wildcard src/*.sv)
 
@@ -76,12 +76,18 @@ regression: compile
 regression_xf: compile_xf
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)))
 
-# Every test module once at default parameters, plus harness_selftest and the xf pytest suite.
-test_all: compile compile_xf
+# Every test module once at default parameters, plus harness_selftest, the xf pytest suite and export --check.
+# The held-out tolerance checks need torch and NANOGPT_DIR, so test_all fails rather than skips them.
+test_all: require_nanogpt compile compile_xf
 	@$(call suite,$(BUILD)/sim.vvp,$(filter-out $(XF_TESTS) $(WS_TESTS),$(TESTS)))
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(XF_TESTS))
 	@for t in $(WS_TESTS) harness_selftest; do $(MAKE) --no-print-directory $$t || exit 1; done
-	python3 -m pytest xf/tests -q
+	XF_REQUIRE_NANOGPT=1 python3 -m pytest xf/tests -q
+	python3 -m xf.export --check
+
+require_nanogpt:
+	@python3 -c "import torch" 2>/dev/null && test -n "$$NANOGPT_DIR" \
+	  || { echo "test_all needs torch and NANOGPT_DIR (a nanoGPT Extended checkout @ 03dbab8)"; exit 1; }
 
 # regression, regression_xf, test_l1d_indepth and every test_xf_* per configuration, each in build/matrix/<cfg>.
 # `make -j4 matrix` runs configurations in parallel.

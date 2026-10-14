@@ -7,6 +7,7 @@
 module core #(
     parameter DATA_MEM_ADDR_BITS    = 8,
     parameter DATA_MEM_DATA_BITS    = 8,
+    parameter WORD_BITS             = 8,
     parameter PROGRAM_MEM_ADDR_BITS = 8,
     parameter PROGRAM_MEM_DATA_BITS = 16,
     parameter THREADS_PER_BLOCK     = 4,
@@ -46,18 +47,19 @@ module core #(
 
     wire [7:0]  current_pc;
     wire [7:0]  next_pc [THREADS_PER_BLOCK-1:0];
-    wire [7:0]  rs      [THREADS_PER_BLOCK-1:0];
-    wire [7:0]  rt      [THREADS_PER_BLOCK-1:0];
+    wire [WORD_BITS-1:0] rs      [THREADS_PER_BLOCK-1:0];
+    wire [WORD_BITS-1:0] rt      [THREADS_PER_BLOCK-1:0];
     wire [1:0]  lsu_state [THREADS_PER_BLOCK-1:0];
-    wire [7:0]  lsu_out [THREADS_PER_BLOCK-1:0];
-    wire [7:0]  alu_out [THREADS_PER_BLOCK-1:0];
+    wire [WORD_BITS-1:0] lsu_out [THREADS_PER_BLOCK-1:0];
+    wire [WORD_BITS-1:0] alu_out [THREADS_PER_BLOCK-1:0];
 
     wire [3:0]  decoded_rd_address, decoded_rs_address, decoded_rt_address;
     wire [2:0]  decoded_nzp;
     wire [7:0]  decoded_immediate;
     wire        decoded_reg_write_enable, decoded_mem_read_enable, decoded_mem_write_enable;
     wire        decoded_nzp_write_enable;
-    wire [1:0]  decoded_reg_input_mux, decoded_alu_arithmetic_mux;
+    wire [1:0]  decoded_reg_input_mux;
+    wire [2:0]  decoded_alu_arithmetic_mux;
     wire        decoded_alu_output_mux, decoded_pc_mux, decoded_ret;
     wire        decoded_smem_read_enable, decoded_smem_write_enable, decoded_bar;
 
@@ -65,9 +67,9 @@ module core #(
     wire [THREADS_PER_BLOCK-1:0] smem_read_enable_v;
     wire [THREADS_PER_BLOCK-1:0] smem_write_enable_v;
     wire [7:0] smem_read_address  [THREADS_PER_BLOCK-1:0];
-    wire [7:0] smem_read_data     [THREADS_PER_BLOCK-1:0];
+    wire [WORD_BITS-1:0] smem_read_data [THREADS_PER_BLOCK-1:0];
     wire [7:0] smem_write_address [THREADS_PER_BLOCK-1:0];
-    wire [7:0] smem_write_data    [THREADS_PER_BLOCK-1:0];
+    wire [WORD_BITS-1:0] smem_write_data [THREADS_PER_BLOCK-1:0];
 
     fetcher #(
         .PROGRAM_MEM_ADDR_BITS(PROGRAM_MEM_ADDR_BITS),
@@ -129,7 +131,7 @@ module core #(
         .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
         .SIZE(SMEM_SIZE),
         .ADDR_BITS(8),
-        .DATA_BITS(DATA_MEM_DATA_BITS)
+        .DATA_BITS(WORD_BITS)
     ) smem_instance (
         .clk(clk), .reset(reset),
         .lane_read_enable(smem_read_enable_v),
@@ -143,7 +145,7 @@ module core #(
     genvar i;
     generate
         for (i = 0; i < THREADS_PER_BLOCK; i = i + 1) begin : threads
-            alu alu_instance (
+            alu #(.WORD_BITS(WORD_BITS)) alu_instance (
                 .clk(clk), .reset(reset), .enable(i < thread_count),
                 .core_state(core_state),
                 .decoded_alu_arithmetic_mux(decoded_alu_arithmetic_mux),
@@ -152,7 +154,10 @@ module core #(
                 .alu_out(alu_out[i])
             );
 
-            lsu lsu_instance (
+            lsu #(
+                .WORD_BITS(WORD_BITS),
+                .ADDR_BITS(DATA_MEM_ADDR_BITS)
+            ) lsu_instance (
                 .clk(clk), .reset(reset), .enable(i < thread_count),
                 .core_state(core_state),
                 .decoded_mem_read_enable(decoded_mem_read_enable),
@@ -181,7 +186,7 @@ module core #(
             registers #(
                 .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
                 .THREAD_ID(i),
-                .DATA_BITS(DATA_MEM_DATA_BITS)
+                .WORD_BITS(WORD_BITS)
             ) register_instance (
                 .clk(clk), .reset(reset), .enable(i < thread_count),
                 .block_id(block_id),
@@ -198,7 +203,7 @@ module core #(
             );
 
             pc #(
-                .DATA_MEM_DATA_BITS(DATA_MEM_DATA_BITS),
+                .WORD_BITS(WORD_BITS),
                 .PROGRAM_MEM_ADDR_BITS(PROGRAM_MEM_ADDR_BITS)
             ) pc_instance (
                 .clk(clk), .reset(reset), .enable(i < thread_count),

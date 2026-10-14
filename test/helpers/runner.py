@@ -26,9 +26,12 @@ async def run_kernel(dut, program: List[int], data: List[int], threads: int,
                      timeout_cycles: int = 20_000,
                      program_addr_bits: int = 8, program_data_bits: int = 16,
                      program_channels: int = 1,
-                     data_addr_bits: int = 8, data_data_bits: int = 8,
+                     data_addr_bits: Optional[int] = None, data_data_bits: Optional[int] = None,
                      data_channels: int = 4,
                      mem_latency: int = 0) -> dict:
+    bits, addr = data_bus(dut)
+    data_data_bits = data_data_bits or bits
+    data_addr_bits = data_addr_bits or addr
     program_memory = Memory(dut, program_addr_bits, program_data_bits,
                             program_channels, "program", latency=mem_latency)
     data_memory = Memory(dut, data_addr_bits, data_data_bits,
@@ -36,6 +39,12 @@ async def run_kernel(dut, program: List[int], data: List[int], threads: int,
 
     await setup(dut, program_memory, program, data_memory, data, threads)
     return await _run(dut, program_memory, data_memory, threads, timeout_cycles), data_memory
+
+
+def data_bus(dut):
+    """(word bits, address bits) of the DUT's data memory bus."""
+    channels = len(dut.data_mem_read_ready)
+    return len(dut.data_mem_read_data) // channels, len(dut.data_mem_read_address) // channels
 
 
 async def _run(dut, program_memory: Memory, data_memory: Memory, threads: int,
@@ -80,7 +89,7 @@ async def run_launches(dut, image, launches: List[Launch], mem_latency: int = 0)
     (per-launch metrics, data memory).
     """
     channels = len(dut.data_mem_read_ready)
-    bus = (len(dut.data_mem_read_data) // channels, len(dut.data_mem_read_address) // channels)
+    bus = data_bus(dut)
     if bus != (image.word_bits, image.addr_bits):
         raise ValueError(f"image is {image.word_bits}-bit x 2**{image.addr_bits}, "
                          f"DUT data memory is {bus[0]}-bit x 2**{bus[1]}")

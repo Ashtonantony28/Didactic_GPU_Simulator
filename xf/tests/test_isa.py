@@ -5,9 +5,6 @@ import pytest
 
 from xf.isa import FIELDS, OPCODES, decode, encode, operands
 
-# Opcodes defined in xf/isa.py but not yet in docs/isa.md (SG2 wires and documents them).
-PENDING_DOCS = {"SRA", "MAX"}
-
 
 def test_opcodes_unique_and_cover_4_bits():
     assert sorted(op for op, _ in OPCODES.values()) == list(range(16))
@@ -34,4 +31,4 @@ def test_encode_rejects_bad_fields(mnem, fields):
 def test_docs_opcode_table_matches():
     doc = (Path(__file__).resolve().parents[2] / "docs" / "isa.md").read_text()
     rows = {m.replace("BRnzp", "BR"): int(op, 2) for op, m in re.findall(r"^\| `([01]{4})`\s*\| (\w+)", doc, re.M)}
-    assert rows == {m: op for m, (op, _) in OPCODES.items() if m not in PENDING_DOCS}
+    assert rows == {m: op for m, (op, _) in OPCODES.items()}

@@ -4,7 +4,7 @@
 // Program Counter
 // Per-thread next-PC compute. NZP latched on CMP UPDATE; BRnzp consults it in EXECUTE.
 module pc #(
-    parameter DATA_MEM_DATA_BITS    = 8,
+    parameter WORD_BITS             = 8,
     parameter PROGRAM_MEM_ADDR_BITS = 8
 ) (
     input  wire                              clk,
@@ -12,10 +12,10 @@ module pc #(
     input  wire                              enable,
     input  wire [2:0]                        core_state,
     input  wire [2:0]                        decoded_nzp,
-    input  wire [DATA_MEM_DATA_BITS-1:0]     decoded_immediate,
+    input  wire [7:0]                        decoded_immediate,
     input  wire                              decoded_nzp_write_enable,
     input  wire                              decoded_pc_mux,
-    input  wire [DATA_MEM_DATA_BITS-1:0]     alu_out,
+    input  wire [WORD_BITS-1:0]              alu_out,
     input  wire [PROGRAM_MEM_ADDR_BITS-1:0]  current_pc,
     output reg  [PROGRAM_MEM_ADDR_BITS-1:0]  next_pc
 );

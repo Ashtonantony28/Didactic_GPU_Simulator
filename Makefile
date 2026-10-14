@@ -1,5 +1,5 @@
 # tiny-gpu-extended Makefile
-.PHONY: compile test_% clean bench bench_clean harness_selftest
+.PHONY: gpu_v compile compile_xf test_% test_xf_% clean bench bench_clean harness_selftest
 
 SRC := $(wildcard src/*.sv)
 
@@ -19,10 +19,18 @@ build:
 GPU_SRC := $(filter-out src/warp_scheduler_tb.sv,$(SRC))
 WS_SRC  := src/warp_scheduler.sv src/warp_scheduler_tb.sv
 
-compile: build
+gpu_v: build
 	sv2v -w build/gpu.v $(GPU_SRC) 2>/dev/null
 	printf '`timescale 1ns/1ns\n' > build/_ts.v && cat build/_ts.v build/gpu.v > build/gpu_ts.v && mv build/gpu_ts.v build/gpu.v
+
+compile: gpu_v
 	iverilog -o build/sim.vvp -s gpu -g2012 $(PARAMS) build/gpu.v
+
+# Transformer (xf) build: 32-bit words, 4096-word data memory; PARAMS are appended.
+XF_PARAMS := -Pgpu.WORD_BITS=32 -Pgpu.DATA_MEM_DATA_BITS=32 -Pgpu.DATA_MEM_ADDR_BITS=12
+
+compile_xf: gpu_v
+	iverilog -o build/sim_xf.vvp -s gpu -g2012 $(XF_PARAMS) $(PARAMS) build/gpu.v
 
 compile_ws: build
 	sv2v -w build/ws.v $(WS_SRC)
@@ -43,6 +51,9 @@ test_warp_scheduler_gtlrr: WS_PARAMS=-Pwarp_scheduler_tb.POLICY=2
 test_warp_scheduler_gtlrr: WS_TEST=gtlrr
 test_warp_scheduler_gtlrr: compile_ws
 	$(call cocotb,test.test_warp_scheduler_$(WS_TEST),build/ws.vvp)
+
+test_xf_%: compile_xf
+	$(call cocotb,test.test_xf_$*,build/sim_xf.vvp)
 
 test_%: compile
 	$(call cocotb,test.test_$*,build/sim.vvp)

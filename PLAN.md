@@ -23,6 +23,7 @@ thread and go back to the user.
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | SG7 benchmarks | DONE | [#9](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/9) |
 | SG8 | Stretch: single attention head (M6)    | SG6             | Attention head (SG8) | DONE | [#10](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/10) |
 | SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | —              | TODO    | —  |
+| SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | —              | TODO    | —  |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -337,6 +338,22 @@ the SG5 rmsnorm cases and the SG6 chain; MLP block within TOL of nanoGPT on
 `xf/tests/test_audit1.py` xfail markers removed and passing; fixtures regenerated and TOL
 re-measured in contract 8.
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_rmsnorm && make test_xf_mlp_block`
+
+### SG10 — AUDIT-2 H1: calibration headroom
+Max-abs calibration saturates activations on held-out inputs from the calibration distribution:
+MLP 13.08 LSB (4096 calibration inputs), attention 8.30 LSB (65,536), against TOLs of 2 and 3.
+More calibration inputs only make the tail rarer. See AUDIT-2.md H1 and M1. Exporter-only: scales
+live in the image, so no contract or kernel change.
+
+Accept: every non-input activation scale (MLP h, gate, up, act, down, out; attention q, k, v,
+scores, o, y) calibrated with headroom so that no activation saturates on
+`rng(12345).standard_normal((200000, 4, 8))`; `export --check` measures both blocks on ≥ 200k
+held-out inputs and asserts TOL; TOL stays 2 / 3 output LSB with the new absolute values and
+measured maxima recorded in contract 8; fixtures regenerated, all xf cocotb tests bit-exact;
+`test_attention_tol_on_heldout` xfail marker removed and passing. `test_mlp_tol_on_heldout` also
+needs SG9: whichever of SG9/SG10 lands second removes its marker. SG9 and SG10 both regenerate
+the fixtures and edit `xf/export.py`, so they do not run concurrently.
+Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_mlp_block && make test_xf_attention`
 
 ## Audit
 

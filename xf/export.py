@@ -1,4 +1,4 @@
-"""Quantize the D3 nanoGPT MLP block (x + mlp(rmsnorm(x))) and attention head to int8 and write fixtures.
+"""Quantize the D3 nanoGPT MLP block (x + mlp(rmsnorm(x))) and attention head (attn(rmsnorm(x))) to int8 and write fixtures.
 
     NANOGPT_DIR=... python3 -m xf.export           # write test/fixtures/xf/{mlp_block,attention}_<i>.json
     NANOGPT_DIR=... python3 -m xf.export --check   # determinism, bounds, tolerance, fixtures current
@@ -60,6 +60,16 @@ def rsqrt_kmax(d, n=RSQRT_LEN):
     return int(golden.rsqrt_index(d * 128 * 128, n)[1])
 
 
+def rmsnorm_lut(sx, sw, sh, wmax, d):
+    """(rsqrt_lut, s) for rmsnorm_int from x (scale sx) and weight (scale sw, max |w_q| wmax) to h (scale sh)."""
+    ss = np.arange(1, RSQRT_LEN)    # rsqrt_lut[0] only meets x = 0
+    r = np.r_[0, 1 / np.sqrt(sx ** 2 * ss / d + EPS) * sx * sw / sh]
+    (rmax,), s = fixed_point([r.max()], [128 * wmax], rsqrt_kmax(d))
+    lut = np.rint(r * (1 << s)).astype(np.int64)
+    assert lut.max() == rmax
+    return lut, s
+
+
 def build_image(weights, scales):
     """weights: float norm_w (d,), w_gate/w_up (d,H), w_down (H,d) as x @ W. scales: per activation."""
     sc = scales
@@ -67,11 +77,7 @@ def build_image(weights, scales):
     sw = {k: maxabs_scale(v) for k, v in weights.items()}
     d, hidden = weights["w_gate"].shape
 
-    ss = np.arange(1, RSQRT_LEN)    # rsqrt_lut[0] only meets x = 0
-    r = np.r_[0, 1 / np.sqrt(sc["x"] ** 2 * ss / d + EPS) * sc["x"] * sw["norm_w"] / sc["h"]]
-    (rmax,), norm_s = fixed_point([r.max()], [128 * int(np.abs(w["norm_w"]).max())], rsqrt_kmax(d))
-    rsqrt_lut = np.rint(r * (1 << norm_s)).astype(np.int64)
-    assert rsqrt_lut.max() == rmax
+    rsqrt_lut, norm_s = rmsnorm_lut(sc["x"], sw["norm_w"], sc["h"], int(np.abs(w["norm_w"]).max()), d)
 
     g = np.arange(-128, 128) * sc["gate"]
     silu = g / (1 + np.exp(-g))
@@ -208,38 +214,41 @@ def export(nanogpt_dir):
     return img, cases, worst
 
 
-def float_attention(attn, x):
-    """Float activations of nanoGPT's CausalSelfAttention (n_head=1) on x (..., T, d)."""
+def float_attention(blk, x):
+    """Float activations of nanoGPT's attn(ln_1(x)) (CausalSelfAttention, n_head=1) on x (..., T, d)."""
     import torch
     import torch.nn.functional as F
 
+    attn = blk.attn
     with torch.no_grad():
         x = torch.as_tensor(x, dtype=torch.float64)
-        q, k, v = attn.c_attn(x).split(attn.n_embd, dim=-1)
+        h = blk.ln_1(x)
+        q, k, v = attn.c_attn(h).split(attn.n_embd, dim=-1)
         causal = torch.ones(T, T, dtype=torch.bool).tril()
         scores = q @ k.transpose(-2, -1) / math.sqrt(attn.head_dim)
         o = F.softmax(scores.masked_fill(~causal, float("-inf")), dim=-1) @ v
         y = attn.c_proj(o)
-        assert torch.allclose(y, attn(x.reshape(-1, T, N_EMBD)).reshape(y.shape), rtol=0, atol=1e-12)
-        a = {"x": x, "q": q, "k": k, "v": v, "scores": scores.masked_fill(~causal, 0), "o": o, "y": y}
+        assert torch.allclose(y, attn(blk.ln_1(x.reshape(-1, T, N_EMBD))).reshape(y.shape), rtol=0, atol=1e-12)
+        a = {"x": x, "h": h, "q": q, "k": k, "v": v, "scores": scores.masked_fill(~causal, 0), "o": o, "y": y}
         return {k: v.numpy() for k, v in a.items()}
 
 
 def export_attention(nanogpt_dir):
     """-> (image, check cases [(x_q, golden, reference)], measured max error in y LSB)."""
-    attn = build_block(nanogpt_dir).attn
-    w = attn.c_attn.weight.detach().numpy().T
-    weights = {f"w_{p}": w[:, i * N_EMBD:(i + 1) * N_EMBD] for i, p in enumerate(attention.PROJ)}
-    weights["w_o"] = attn.c_proj.weight.detach().numpy().T
+    blk = build_block(nanogpt_dir)
+    w = blk.attn.c_attn.weight.detach().numpy().T
+    weights = {"norm_w": blk.ln_1.weight.detach().numpy(),
+               **{f"w_{p}": w[:, i * N_EMBD:(i + 1) * N_EMBD] for i, p in enumerate(attention.PROJ)}}
+    weights["w_o"] = blk.attn.c_proj.weight.detach().numpy().T
     calib = np.random.default_rng(SEED).standard_normal((ATTN_N_CALIB, T, N_EMBD))
     sx = maxabs_scale(calib)
-    acts = float_attention(attn, quantize(calib, sx) * sx)
+    acts = float_attention(blk, quantize(calib, sx) * sx)
     scales = calib_scales(acts, sx)
-    img = attention.build_image(weights, scales, T, fixed_point, quantize, maxabs_scale)
+    img = attention.build_image(weights, scales, T, fixed_point, quantize, maxabs_scale, rmsnorm_lut)
     attention.check_bounds(img)
 
     xq = quantize(np.random.default_rng(SEED + 1).standard_normal((ATTN_N_CHECK, T, N_EMBD)), sx)
-    cases = [(x, attention.attention_int(img, x), ref) for x, ref in zip(xq, float_attention(attn, xq * sx)["y"])]
+    cases = [(x, attention.attention_int(img, x), ref) for x, ref in zip(xq, float_attention(blk, xq * sx)["y"])]
     s_y = img.segments["y"]["scale"]
     return img, cases, max(float(np.abs(g["y"] * s_y - ref).max()) / s_y for _, g, ref in cases)
 
@@ -268,7 +277,7 @@ def heldout(nanogpt_dir, block, img):
     if block == "mlp_block":
         out, ref, got = "out", float_acts(blk, xq * s["x"]["scale"]), mlp_block_int(img, xq)
     else:
-        out, ref, got = "y", float_attention(blk.attn, xq * s["x"]["scale"]), attention.attention_int(img, xq)
+        out, ref, got = "y", float_attention(blk, xq * s["x"]["scale"]), attention.attention_int(img, xq)
     err = np.abs(got[out] * s[out]["scale"] - ref[out]).max(axis=(1, 2)) / s[out]["scale"]
     return err, {k: float(np.abs(v).max()) / s[k]["scale"] for k, v in ref.items() if k != "x"}
 

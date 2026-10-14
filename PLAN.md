@@ -26,7 +26,7 @@ thread and go back to the user.
 | SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | SG10 calibration headroom | DONE | [#14](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/14) |
 | SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
-| SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | — | TODO | — |
+| SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | SG13 attention input norm | DONE | [#20](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/20) |
 | SG14 | AUDIT-6 H1: attention scores precision | SG13 | — | TODO | — |
 | SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | — | TODO | — |
 | SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | — | TODO | — |
@@ -188,10 +188,12 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    and 1.418 LSB over the 200k held-out inputs, both asserted by
    `export --check`; 1.20, 1.20, 1.22, 1.14 LSB on
    `rng(7).standard_normal((2000, 4, 8))` scaled by 1.0, 0.5, 0.3, 0.1.
-   Attention head: **TOL = 3 output LSB** (`3 * scale(y)` = 0.066776).
-   Measured max error 2.107 LSB over 2000 seeded inputs and 2.751 LSB
-   over the 200k held-out inputs, asserted by `export --check`. Over 1M
-   held-out inputs one unsaturated input reaches 3.614 LSB (AUDIT-2 M3).
+   Attention head (`attn(ln_1(x))`, SG13): **TOL = 3 output LSB**
+   (`3 * scale(y)` = 0.041765). Measured max error 2.400 LSB over 2000 seeded
+   inputs and 2.976 LSB over the 200k held-out inputs (peak activation
+   86.1 LSB), asserted by `export --check`; 2.09–2.66 LSB on
+   `rng(7).standard_normal((2000, 4, 8))` scaled by 0.05–10, asserted by
+   `test_audit5.py`. Over 1M fresh inputs (seeds 1000–1004) one reaches 3.18 LSB.
    Its scales are calibrated on 2^16 inputs: with the MLP's 4096, `k` and
    `v` saturate on held-out inputs and the worst error reaches 16.6 LSB.
 
@@ -326,11 +328,11 @@ Accept: bit-exact vs `golden.softmax_lut` pipeline; within TOL of nanoGPT
 single-head causal attention; rows sum to the fixed-point one within 1 LSB.
 Verify: `make test_xf_attention`
 
-Chain (SG8): `xf/attention.py` `launches(img, kind, acts=None)` runs
-q, k, v (matmul) → `kT` (`kernels/transpose.asm`) → scores = q @ kT (matmul,
+Chain (SG8, `ln_1` added by SG13): `xf/attention.py` `launches(img, kind, acts=None)` runs
+h (`ln_1`: rmsnorm launch, contract 4, nanoGPT `ln_1` weight) → q, k, v (matmul) → `kT` (`kernels/transpose.asm`) → scores = q @ kT (matmul,
 1/√hd folded into `scores_M`) → p (`kernels/softmax.asm`, causal, one thread
 per element, each scanning its row) → o = p @ v → y = o @ `w_o` (c_proj) on
-`test/fixtures/xf/attention_<0-3>.json` (781 words); `attention_int` is the
+`test/fixtures/xf/attention_<0-3>.json` (1847 words: `x, norm_w, rsqrt_lut[1024], norm_M, norm_s, h`, then the SG8 segments); `attention_int` is the
 golden chain, `check_bounds` its int32 bounds. `one = 127` so p stays int8
 for the p @ v matmul; `exp_lut[d + 255] = round(exp(d·scale(scores))·2^23)`,
 2^23 being the largest power keeping `e·one + S/2` in int32 at T = 4.
@@ -427,6 +429,16 @@ and on the 200k held-out inputs; attention TOL re-measured in contract 8; fixtur
 `test_xf_attention` bit-exact; the `xf/tests/test_audit5.py` xfail markers removed and passing (the test
 updated to the new reference).
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_attention`
+
+Done: the head runs `ln_1` through the existing rmsnorm kernel and `rmsnorm_int` (`export.rmsnorm_lut`, shared
+with the MLP; MLP fixtures unchanged), calibrated on the new chain; the reference is `blk.attn(blk.ln_1(x))`
+without the residual. Within TOL at every scale from 0.05× to 10×, on uniform and ±127 int8 inputs, and on
+the 200k held-out inputs (contract 8); an all-zero `y` now fails on every quiet input, so the check is no
+longer vacuous. `test_xf_attention` is bit-exact; the bench has no attention entry, so `docs/xf-bench.md`
+is unchanged. No ISA or contract 1–7 change. Open: the held-out max (2.976 LSB) sits close to TOL, and 1 of
+1M fresh inputs reaches 3.18 LSB (the AUDIT-2 M3 tail, previously 3.614). Both `test_audit6.py` repros now pass
+(hill-climbed worst 1.74 LSB, outlier channel 2.83 LSB, 0 of 200k over TOL), so their markers are removed; the
+hill climb has not been re-run against this chain, which stays SG14's first step.
 
 ### SG14 — AUDIT-6 H1: attention scores precision
 `scores` is computed from int8 `q` and `k`, whose rounding errors are multiplied by the other operand

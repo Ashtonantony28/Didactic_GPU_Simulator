@@ -1,6 +1,6 @@
-"""Single causal attention head (nanoGPT CausalSelfAttention, n_head=1) on an int8 image.
+"""Single causal attention head (nanoGPT attn(ln_1(x)), CausalSelfAttention n_head=1) on an int8 image.
 
-    q, k, v = x @ Wq, x @ Wk, x @ Wv; scores = q @ k.T (1/sqrt(hd) folded into its requant);
+    h = rmsnorm(x); q, k, v = h @ Wq, h @ Wk, h @ Wv; scores = q @ k.T (1/sqrt(hd) folded into its requant);
     p = softmax_lut(scores, exp_lut, one); o = p @ v; y = o @ Wo
 
 Torch-free: the image layout, golden chain, bounds and launch chain. xf/export.py builds the
@@ -15,7 +15,7 @@ from . import elementwise as ew, golden, kernels
 from .image import Image
 
 ONE = 127                       # fixed-point 1.0 of p; p <= ONE keeps p int8 for the p @ v matmul
-ACTS = ("x", "q", "k", "v", "kT", "scores", "p", "o", "y")
+ACTS = ("x", "h", "q", "k", "v", "kT", "scores", "p", "o", "y")
 PROJ = ("q", "k", "v")
 
 
@@ -33,21 +33,28 @@ def exp_lut(score_scale, t, one=ONE):
     return np.rint(np.exp(np.arange(-255, 1) * score_scale) * (1 << exp_bits(t, one))).astype(np.int64)
 
 
-def build_image(weights, scales, t, fixed_point, quantize, maxabs_scale):
-    """weights: float w_q/w_k/w_v/w_o (d, d) as x @ W. scales: x, q, k, v, scores, o, y.
-    The export helpers (fixed_point, quantize, maxabs_scale) come from xf.export."""
+def build_image(weights, scales, t, fixed_point, quantize, maxabs_scale, rmsnorm_lut):
+    """weights: float norm_w (d,), w_q/w_k/w_v/w_o (d, d) as x @ W. scales: x, h, q, k, v, scores, o, y.
+    The export helpers (fixed_point, quantize, maxabs_scale, rmsnorm_lut) come from xf.export."""
     sc = scales
     w = {k: quantize(v, maxabs_scale(v)) for k, v in weights.items()}
     sw = {k: maxabs_scale(v) for k, v in weights.items()}
     d, hd = weights["w_q"].shape
+
+    rsqrt_lut, norm_s = rmsnorm_lut(sc["x"], sw["norm_w"], sc["h"], int(np.abs(w["norm_w"]).max()), d)
 
     def mm(name, x, out):
         return fixed_point([sc[x] * sw[name] / sc[out]], [128 * int(np.abs(w[name]).sum(axis=0).max())])
 
     img = Image(word_bits=32, addr_bits=12)
     img.alloc("x", [t, d], "i8", sc["x"])
+    img.alloc("norm_w", [d], "i8", sw["norm_w"], w["norm_w"])
+    img.alloc("rsqrt_lut", [len(rsqrt_lut)], "i32", data=rsqrt_lut)
+    img.alloc("norm_M", [1], "i32", data=[1])
+    img.alloc("norm_s", [1], "i32", data=[norm_s])
+    img.alloc("h", [t, d], "i8", sc["h"])
     for p in PROJ:
-        (m,), s = mm(f"w_{p}", "x", p)
+        (m,), s = mm(f"w_{p}", "h", p)
         img.alloc(f"w_{p}", [d, hd], "i8", sw[f"w_{p}"], w[f"w_{p}"])
         img.alloc(f"{p}_M", [1], "i32", data=[m])
         img.alloc(f"{p}_s", [1], "i32", data=[s])
@@ -81,7 +88,8 @@ def attention_int(img, x):
     def rq(acc, out):
         return golden.requant(acc, _c(img, f"{out}_M"), _c(img, f"{out}_s"))
 
-    o = {p: rq(golden.matmul_i8(x, img.read(f"w_{p}")), p) for p in PROJ}
+    o = {"h": golden.rmsnorm_int(x, img.read("norm_w"), img.read("rsqrt_lut"), _c(img, "norm_M"), _c(img, "norm_s"))}
+    o.update({p: rq(golden.matmul_i8(o["h"], img.read(f"w_{p}")), p) for p in PROJ})
     o["kT"] = np.swapaxes(o["k"], -1, -2)
     o["scores"] = rq(golden.matmul_i8(o["q"], o["kT"]), "scores")
     o["p"] = golden.softmax_lut(o["scores"], img.read("exp_lut"), _c(img, "one"))
@@ -96,6 +104,9 @@ def check_bounds(img):
     one, emax = _c(img, "one"), int(img.read("exp_lut").max())
     worst = {p: 128 * int(np.abs(img.read(f"w_{w}")).sum(axis=0).max()) * _c(img, f"{p}_M") + _rnd(_c(img, f"{p}_s"))
              for p, w in (("q", "q"), ("k", "k"), ("v", "v"), ("y", "o"))}
+    kmax = int(golden.rsqrt_index(img.segments["x"]["shape"][-1] * 128 * 128, len(img.read("rsqrt_lut")))[1])
+    worst["h"] = (128 * int(np.abs(img.read("norm_w")).max()) * int(img.read("rsqrt_lut").max()) * _c(img, "norm_M")
+                  + _rnd(_c(img, "norm_s") + kmax))
     worst["scores"] = 128 * 128 * hd * _c(img, "scores_M") + _rnd(_c(img, "scores_s"))
     worst["o"] = 128 * one * t * _c(img, "o_M") + _rnd(_c(img, "o_s"))
     worst["softmax"] = emax * one + t * emax // 2
@@ -134,7 +145,8 @@ def launches(img, kind="tiled", acts=None):
     c = {n: _c(img, n) for n, seg in img.segments.items() if seg["shape"] == [1]}
     mm = lambda x, w, out: kernels.matmul(img, kind, x, w, a[out], c[f"{out}_M"], c[f"{out}_s"])
     return [
-        *((a[p], mm(a["x"], f"w_{p}", p)) for p in PROJ),
+        (a["h"], ew.rmsnorm(img, a["x"], "norm_w", "rsqrt_lut", a["h"], c["norm_M"], c["norm_s"])),
+        *((a[p], mm(a["h"], f"w_{p}", p)) for p in PROJ),
         (a["kT"], ew.transpose(img, a["k"], a["kT"])),
         (a["scores"], mm(a["q"], a["kT"], "scores")),
         (a["p"], ew.softmax(img, a["scores"], "exp_lut", a["p"], c["one"])),

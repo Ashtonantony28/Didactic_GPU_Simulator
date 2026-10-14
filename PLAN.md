@@ -19,7 +19,7 @@ thread and go back to the user.
 | SG3 | Quantization + export (M1)             | SG1             | SG3 | DONE | [#5](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/5) |
 | SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | Int8 matmul kernels (SG4) | DONE | [#6](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/6) |
 | SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | SG5 elementwise and RMSNorm | DONE | [#7](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/7) |
-| SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | —              | TODO | — |
+| SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | MLP block end-to-end (SG6) | DONE | [#8](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/8) |
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | TODO | — |
 | SG8 | Stretch: single attention head (M6)    | SG6             | —              | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
@@ -275,6 +275,11 @@ Accept: final int8 output bit-exact vs golden; dequantized output within
 TOL of nanoGPT `x + mlp(norm(x))` for every fixture input; passes under
 the SG4 param matrix.
 Verify: `make test_xf_mlp_block`
+
+Chain (SG6, for SG7/SG8): `xf/mlp.py` `launches(img, kind, acts=None)` returns
+`[(out segment, (program, threads))]` for the six launches on an exported image,
+`kind` picking the matmul kernel; `alloc_acts(img, prefix)` adds a fresh set of
+activation segments so several inputs share one image (≤ 5 extra sets fit).
 
 ### SG7 — Benchmarks (M5)
 Extend `bench/run.py` with naive vs tiled × `COALESCE` × `DCACHE_LINES`

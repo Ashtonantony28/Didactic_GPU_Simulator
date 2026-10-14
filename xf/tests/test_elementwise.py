@@ -14,7 +14,7 @@ def _img():
     return img
 
 
-@pytest.mark.parametrize("name", ["requant", "relu", "swiglu", "residual_add", "rmsnorm"])
+@pytest.mark.parametrize("name", ["requant", "relu", "swiglu", "residual_add", "rmsnorm", "transpose", "softmax"])
 def test_prologue(name):
     assert kernels.program(name, 0x123)[1:4] == kernels.program(name, 0)[1:4]
 
@@ -29,6 +29,15 @@ def test_args():
     img = _img()
     ew.residual_add(img, "a", "b", "out", 5, 6, 31)
     assert img.read("out.args").tolist()[-2:] == [31, 1 << 30]
+    img = _img()
+    img.alloc("t", [8, 4], "i8")
+    assert ew.transpose(img, "a", "t")[1] == 32
+    assert img.read("t.args").tolist() == [0, img.base("t"), 4, 8]
+    img = _img()
+    img.alloc("sq", [4, 4], "i8")
+    img.alloc("p", [4, 4], "i8")
+    assert ew.softmax(img, "sq", "lut", "p", 127)[1] == 16
+    assert img.read("p.args").tolist() == [img.base("sq"), 96, img.base("p"), 4, 127]
 
 
 @pytest.mark.parametrize("bind", [
@@ -39,6 +48,9 @@ def test_args():
     lambda img: ew.rmsnorm(img, "a", "lut", "rlut", "out", 7, 1, 0),
     lambda img: ew.rmsnorm(img, "a", "w", "rlut", "out", 32, 1, 0),
     lambda img: ew.relu(img, "rlut", "rlut"),
+    lambda img: ew.transpose(img, "a", "out"),
+    lambda img: ew.softmax(img, "a", "lut", "out", 127),
+    lambda img: ew.softmax(img, "out", "rlut", "out", 127),
 ])
 def test_rejects(bind):
     with pytest.raises(ValueError):

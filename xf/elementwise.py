@@ -1,4 +1,4 @@
-"""Bindings for the elementwise and RMSNorm kernels (calling convention: xf/kernels.py).
+"""Bindings for the elementwise, RMSNorm, transpose and softmax kernels (calling convention: xf/kernels.py).
 
 Each binding allocates the args segment `<out>.args` and returns (program, threads),
 one thread per output element. Semantics are xf.golden's, bit for bit.
@@ -67,3 +67,22 @@ def rmsnorm(img, x, w, lut, out, lut_shift, m, s):
     n = math.prod(_shape(img, lut))
     return _bind(img, "rmsnorm", out, [img.base(x), img.base(w), img.base(lut), img.base(out),
                                        d, lut_shift, n - 1, m, s, _rnd(s)])
+
+
+def transpose(img, x, out):
+    """out = x.T for a 2-D x."""
+    r, c = _shape(img, x)
+    if _shape(img, out) != [c, r]:
+        raise ValueError(f"{out} shape {_shape(img, out)} != {[c, r]}")
+    return _bind(img, "transpose", out, [img.base(x), img.base(out), r, c])
+
+
+def softmax(img, scores, lut, out, one):
+    """out = golden.softmax_lut(scores, lut, one), causal, over square scores (T, T)."""
+    _same(img, out, scores)
+    t, t2 = _shape(img, scores)
+    if t != t2:
+        raise ValueError(f"{scores} must be square, got {[t, t2]}")
+    if _shape(img, lut) != [256]:
+        raise ValueError(f"{lut} must have 256 entries")
+    return _bind(img, "softmax", out, [img.base(scores), img.base(lut), img.base(out), t, one])

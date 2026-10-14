@@ -1,12 +1,12 @@
-"""Quantize the D3 nanoGPT MLP block (x + mlp(rmsnorm(x))) to int8 and write fixtures.
+"""Quantize the D3 nanoGPT MLP block (x + mlp(rmsnorm(x))) and attention head to int8 and write fixtures.
 
-    NANOGPT_DIR=... python3 -m xf.export           # write test/fixtures/xf/mlp_block_<i>.json
+    NANOGPT_DIR=... python3 -m xf.export           # write test/fixtures/xf/{mlp_block,attention}_<i>.json
     NANOGPT_DIR=... python3 -m xf.export --check   # determinism, bounds, tolerance, fixtures current
 
 Scales are symmetric per-tensor max-abs over a seeded calibration set. Every
 requant (M, s) is chosen against the worst case over all int8 inputs, so the
 golden pipeline (and the kernels) can never overflow int32. The integer side
-(`mlp_block_int`, `check_bounds`) needs no torch.
+(`mlp_block_int`, `check_bounds`, xf/attention.py) needs no torch.
 """
 import argparse
 import math
@@ -15,13 +15,15 @@ import sys
 
 import numpy as np
 
-from . import fixture, golden
+from . import attention, fixture, golden
 from .image import Image
 
 N_EMBD, HIDDEN, T = 8, 16, 4
 SEED, N_CALIB, N_CHECK, N_FIXTURES = 0, 4096, 200, 4
 RSQRT_LEN, EPS = 1024, 1e-6
 TOL_LSB = 2
+# attention calibrates on 2^16 inputs: with 4096, k and v saturate on held-out inputs (16 LSB worst of 5000)
+ATTN_TOL_LSB, ATTN_N_CALIB, ATTN_N_CHECK = 3, 1 << 16, 2000
 ACTS = ("x", "h", "gate", "up", "act", "down", "out")
 
 
@@ -198,15 +200,80 @@ def export(nanogpt_dir):
     return img, cases, worst
 
 
-def fixture_bytes(nanogpt_dir, tmp):
-    img, cases, worst = export(nanogpt_dir)
-    tol = TOL_LSB * img.segments["out"]["scale"]
+def float_attention(attn, x):
+    """Float activations of nanoGPT's CausalSelfAttention (n_head=1) on x (..., T, d)."""
+    import torch
+    import torch.nn.functional as F
+
+    with torch.no_grad():
+        x = torch.as_tensor(x, dtype=torch.float64)
+        q, k, v = attn.c_attn(x).split(attn.n_embd, dim=-1)
+        causal = torch.ones(T, T, dtype=torch.bool).tril()
+        scores = q @ k.transpose(-2, -1) / math.sqrt(attn.head_dim)
+        o = F.softmax(scores.masked_fill(~causal, float("-inf")), dim=-1) @ v
+        y = attn.c_proj(o)
+        assert torch.allclose(y, attn(x.reshape(-1, T, N_EMBD)).reshape(y.shape), rtol=0, atol=1e-12)
+        a = {"x": x, "q": q, "k": k, "v": v, "scores": scores.masked_fill(~causal, 0), "o": o, "y": y}
+        return {k: v.numpy() for k, v in a.items()}
+
+
+def export_attention(nanogpt_dir):
+    """-> (image, check cases [(x_q, golden, reference)], measured max error in y LSB)."""
+    attn = build_block(nanogpt_dir).attn
+    w = attn.c_attn.weight.detach().numpy().T
+    weights = {f"w_{p}": w[:, i * N_EMBD:(i + 1) * N_EMBD] for i, p in enumerate(attention.PROJ)}
+    weights["w_o"] = attn.c_proj.weight.detach().numpy().T
+    calib = np.random.default_rng(SEED).standard_normal((ATTN_N_CALIB, T, N_EMBD))
+    sx = maxabs_scale(calib)
+    acts = float_attention(attn, quantize(calib, sx) * sx)
+    scales = {k: maxabs_scale(v) for k, v in acts.items()}
+    scales["x"] = sx
+    img = attention.build_image(weights, scales, T, fixed_point, quantize, maxabs_scale)
+    attention.check_bounds(img)
+
+    xq = quantize(np.random.default_rng(SEED + 1).standard_normal((ATTN_N_CHECK, T, N_EMBD)), sx)
+    cases = [(x, attention.attention_int(img, x), ref) for x, ref in zip(xq, float_attention(attn, xq * sx)["y"])]
+    s_y = img.segments["y"]["scale"]
+    return img, cases, max(float(np.abs(g["y"] * s_y - ref).max()) / s_y for _, g, ref in cases)
+
+
+# fixture case prefix: (export function, output segment, TOL in output LSB)
+BLOCKS = {"mlp_block": (export, "out", TOL_LSB), "attention": (export_attention, "y", ATTN_TOL_LSB)}
+
+
+def fixture_bytes(nanogpt_dir, tmp, block):
+    fn, out, tol_lsb = BLOCKS[block]
+    img, cases, worst = fn(nanogpt_dir)
+    tol = tol_lsb * img.segments[out]["scale"]
     files = {}
     for i, (xq, g, ref) in enumerate(cases[:N_FIXTURES]):
-        path = os.path.join(tmp, f"mlp_block_{i}.json")
-        fixture.save(path, f"mlp_block_{i}", img, {"x": xq}, g, {"out": ref}, tol)
-        files[f"mlp_block_{i}.json"] = open(path, "rb").read()
+        path = os.path.join(tmp, f"{block}_{i}.json")
+        fixture.save(path, f"{block}_{i}", img, {"x": xq}, g, {out: ref}, tol)
+        files[f"{block}_{i}.json"] = open(path, "rb").read()
     return img, cases, worst, files
+
+
+def check(nanogpt_dir, block, a, b):
+    fn, out, tol_lsb = BLOCKS[block]
+    img, cases, worst, files = fixture_bytes(nanogpt_dir, a, block)
+    assert fixture_bytes(nanogpt_dir, b, block)[3] == files, f"{block} export is not deterministic"
+    for name, data in files.items():
+        path = fixture.FIXTURE_DIR / name
+        assert path.exists() and path.read_bytes() == data, f"{path} is stale; rerun python3 -m xf.export"
+    assert img.addr_bits == 12 and len(img.words) <= 1 << 12
+    golden_fn = mlp_block_int if block == "mlp_block" else attention.attention_int
+    for x in (np.full((T, N_EMBD), -128), np.full((T, N_EMBD), 127), *np.random.default_rng(SEED + 2).integers(-128, 128, (100, T, N_EMBD))):
+        golden_fn(img, x)
+    if block == "mlp_block":
+        bounds = check_bounds(img)
+    else:
+        bounds = attention.check_bounds(img)
+        err = attention.row_sum_error(img.read("exp_lut"), int(img.read("one")[0]), T)
+        assert err <= 1, f"softmax rows sum to one within {err} LSB, not 1"
+    assert worst <= tol_lsb, f"{block}: max error {worst:.3f} LSB exceeds TOL {tol_lsb}"
+    print(f"ok {block}: deterministic, {len(img.words)}/{1 << 12} words, bounds {bounds}, "
+          f"{len(cases)} inputs within TOL, max error {worst:.3f} LSB <= {tol_lsb} LSB "
+          f"= {tol_lsb * img.segments[out]['scale']:.6f}")
 
 
 def main(argv=None):
@@ -219,26 +286,17 @@ def main(argv=None):
     if not nanogpt_dir:
         sys.exit("set NANOGPT_DIR to a nanoGPT Extended checkout @ 03dbab8")
 
-    with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-        img, cases, worst, files = fixture_bytes(nanogpt_dir, a)
-        if not args.check:
+    for block in BLOCKS:
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            if args.check:
+                check(nanogpt_dir, block, a, b)
+                continue
+            img, _, worst, files = fixture_bytes(nanogpt_dir, a, block)
             fixture.FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
             for name, data in files.items():
                 (fixture.FIXTURE_DIR / name).write_bytes(data)
-            print(f"wrote {len(files)} fixtures, {len(img.words)} words, max error {worst:.3f} LSB (TOL {TOL_LSB})")
-            return
-        assert fixture_bytes(nanogpt_dir, b)[3] == files, "export is not deterministic"
-
-    for name, data in files.items():
-        path = fixture.FIXTURE_DIR / name
-        assert path.exists() and path.read_bytes() == data, f"{path} is stale; rerun python3 -m xf.export"
-    assert img.addr_bits == 12 and len(img.words) <= 1 << 12
-    for x in (np.full((T, N_EMBD), -128), np.full((T, N_EMBD), 127), *np.random.default_rng(SEED + 2).integers(-128, 128, (100, T, N_EMBD))):
-        mlp_block_int(img, x)
-    assert worst <= TOL_LSB, f"max error {worst:.3f} LSB exceeds TOL {TOL_LSB}"
-    print(f"ok: deterministic, {len(img.words)}/{1 << 12} words, bounds {check_bounds(img)}, "
-          f"{len(cases)} inputs within TOL, max error {worst:.3f} LSB <= {TOL_LSB} LSB "
-          f"= {TOL_LSB * img.segments['out']['scale']:.6f}")
+            print(f"wrote {len(files)} {block} fixtures, {len(img.words)} words, "
+                  f"max error {worst:.3f} LSB (TOL {BLOCKS[block][2]})")
 
 
 if __name__ == "__main__":

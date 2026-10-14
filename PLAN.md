@@ -16,7 +16,7 @@ thread and go back to the user.
 | SG0 | Harness hygiene                        | —               | Harness hygiene (SG0) | DONE | [#2](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/2) |
 | SG1 | Shared interfaces                      | SG0             | Shared interfaces (SG1) | DONE | [#3](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/3) |
 | SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | SG2 wide datapath and ISA | DONE | [#4](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/4) |
-| SG3 | Quantization + export (M1)             | SG1             | —              | TODO | — |
+| SG3 | Quantization + export (M1)             | SG1             | SG3 | DONE | [#5](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/5) |
 | SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | —              | TODO | — |
 | SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | —              | TODO | — |
 | SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | —              | TODO | — |
@@ -59,8 +59,9 @@ install /tmp/sv2v/*/sv2v /usr/local/bin/
 git checkout bench/results                   # tests overwrite these until SG0 lands
 ```
 
-SG3 additionally needs `pip install torch` (CPU) and a clone of nanoGPT
-Extended at `03dbab8` in `$NANOGPT_DIR`.
+SG3 additionally needs `pip install torch` (from PyPI; download.pytorch.org
+is blocked by the egress proxy) and a clone of nanoGPT Extended at `03dbab8`
+in `$NANOGPT_DIR`. Only `xf/export.py` imports torch.
 
 ## Facts the plan is built on
 
@@ -167,6 +168,21 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    (float) are keyed by output segment.
 8. **Tolerance** — `|dequant(sim) - torch| ≤ TOL` per element, TOL set in
    SG3 from measured quantization error and recorded here.
+   MLP block: **TOL = 2 output LSB** (`2 * scale(out)` = 0.071911, the
+   fixture `tol`). Measured max error 1.375 LSB over 200 seeded inputs and
+   1.76 LSB over 2000; errors are input-quantization-free (the float
+   reference runs on `dequant(x_q)`). SG8 measures and records its own.
+
+`xf/export.py` (SG3) layout of `test/fixtures/xf/mlp_block_<0-3>.json`:
+segments in allocation order `x, norm_w, rsqrt_lut[1024], norm_shift,
+norm_M, norm_s, h, w_gate, gate_M, gate_s, gate, w_up, up_M, up_s, up,
+silu_lut, act_M, act_s, act, w_down, down_M, down_s, down, res_Ma, res_Mb,
+res_s, out` (2006 words). Weights are `[in, out]` (`x @ W`); `[1]` i32
+segments hold requant constants; `norm_M` is 1 with all rsqrt/eps/1/d/scale
+factors folded into `rsqrt_lut`. `golden` holds `h, gate, up, act, down,
+out`; `reference` holds `out`. `export.mlp_block_int(image, x)` is the
+golden chain on those segments, and every (M, s) is chosen against the
+worst case over all int8 inputs (`export.check_bounds`).
 
 ## Sub-goals
 

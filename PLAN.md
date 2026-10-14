@@ -27,7 +27,7 @@ thread and go back to the user.
 | SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
 | SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | SG13 attention input norm | DONE | [#20](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/20) |
-| SG14 | AUDIT-6 H1: attention scores precision | SG13 | — | TODO | — |
+| SG14 | AUDIT-6 H1: attention scores precision | SG13 | SG14 attention TOL bound | DONE | [#25](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/25) |
 | SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | SG15: make the merge gate run the real tolerance checks | DONE | [#24](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/24) |
 | SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | — | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
@@ -189,12 +189,17 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    and 1.418 LSB over the 200k held-out inputs, both asserted by
    `export --check`; 1.20, 1.20, 1.22, 1.14 LSB on
    `rng(7).standard_normal((2000, 4, 8))` scaled by 1.0, 0.5, 0.3, 0.1.
-   Attention head (`attn(ln_1(x))`, SG13): **TOL = 3 output LSB**
-   (`3 * scale(y)` = 0.041765). Measured max error 2.400 LSB over 2000 seeded
+   Attention head (`attn(ln_1(x))`, SG13): **TOL = 6 output LSB**
+   (`6 * scale(y)` = 0.083531; SG14, was 3). Set from an adversarial search, not a Gaussian
+   sample: hill-climbing unsaturated int8 inputs reaches 5.35 LSB (`test_audit6.py`; search-backed,
+   not a proof), and the Gaussian tail alone exceeds 3 (3.18 LSB in 1M, 3.23 in 200k at seed 2026). No single
+   rounding dominates (`h` ~1.1, `v`/`o` 0.6–0.85, `y` 0.5, `p` 0.3–0.4 LSB on the worst inputs;
+   unrounded `q`/`k` give the same search maximum). Measured max error 2.400 LSB over 2000 seeded
    inputs and 2.976 LSB over the 200k held-out inputs (peak activation
-   86.1 LSB), asserted by `export --check`; 2.09–2.66 LSB on
+   86.1 LSB), and 3.337 LSB with channel 5 ×4, asserted by `export --check`; 2.09–2.66 LSB on
    `rng(7).standard_normal((2000, 4, 8))` scaled by 0.05–10, asserted by
-   `test_audit5.py`. Over 1M fresh inputs (seeds 1000–1004) one reaches 3.18 LSB.
+   `test_audit5.py`; up to 3.46 LSB with any one channel ×4, and 3.23/3.08/3.02 on fresh
+   Gaussian/Laplace/Student-t inputs, asserted by `test_audit6.py`.
    Its scales are calibrated on 2^16 inputs: with the MLP's 4096, `k` and
    `v` saturate on held-out inputs and the worst error reaches 16.6 LSB.
 
@@ -457,6 +462,14 @@ folded so one operand is exact) or the attention TOL re-derived from a worst-cas
 contract 8; both `xf/tests/test_audit6.py` xfail markers removed and passing; kernels bit-exact vs the new
 golden; `export --check` also asserts TOL on a non-Gaussian unsaturated set (e.g. the outlier-channel inputs).
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_attention`
+
+Done: on SG13's chain `q`/`k` rounding no longer drives the error: with `q` and `k` unrounded the hill climb
+reaches the same maximum, and folding `Wq·Wkᵀ` gives the same. The search over unsaturated inputs reaches 4.9 LSB
+(5.35 after refining the best points) from several stacked roundings, and int16 `h` alone would still reach
+3.43 LSB (float emulation), so per the user's decision (2026-10-14) the attention TOL is re-derived as 6 LSB (contract 8) with no kernel, layout or
+contract 1–7 change; fixtures differ only in `tol`. `test_audit6.py` asserts it on the five climbed inputs (two above 5 LSB), one
+channel ×4 for every channel, and fresh Gaussian, Laplace and Student-t inputs (200k each); `export --check`
+also asserts TOL on the channel-5 ×4 set for both blocks. Open: AUDIT-6 L1 (the held-out seed tuned `HEADROOM`).
 
 ### SG15 — AUDIT-7 H1: torch-gated checks in the merge gate
 Without torch and `NANOGPT_DIR`, `make test_all` skips 13 tests, every one that checks more than the 4

@@ -24,7 +24,7 @@ thread and go back to the user.
 | SG8 | Stretch: single attention head (M6)    | SG6             | Attention head (SG8) | DONE | [#10](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/10) |
 | SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | —              | TODO    | —  |
 | SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | —              | TODO    | —  |
-| SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | —              | TODO    | —  |
+| SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | —              | TODO    | —  |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
@@ -368,6 +368,8 @@ MEDIC; `test_l1d_indepth` run under DCACHE_LINES=16 (with and without MEDIC) by 
 Both AUDIT-3 H1 mutants (write hit leaves the line stale; a fill never sets `valid`) make the new tests
 fail, and the unmutated RTL passes.
 Verify: `make test_l1d_indepth PARAMS=-Pgpu.DCACHE_LINES=16 && make test_l1d_indepth PARAMS="-Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC=1"`, then each AUDIT-3 H1 `sed` mutant makes the first command fail.
+
+Done: `test_xf_l1d` runs the same tests at WORD_BITS=32; each test reads DCACHE_LINES, MEDIC and NUM_CORES from the DUT, so the SG12 matrix covers both widths. Both mutants fail at both widths; the tests pass at NUM_CORES 1/2/4, DCACHE_LINES=4 COALESCE=1 and all five. Open issue: under MEDIC=1 the hot-address case is 0 hits / 12 misses. Every lane's hit window starts empty, so it is low-utility, never installs a line and can never leave bypass; MEDIC=1 turns the cache off, which `docs/final-report.md` describes as correct bypass. The test pins this; an RTL fix changes the expected counts.
 
 ### SG12 — AUDIT-3 H2: configuration matrix and full-suite targets
 No make target runs the whole suite or any parameter-gated RTL; an I-cache that hangs every kernel

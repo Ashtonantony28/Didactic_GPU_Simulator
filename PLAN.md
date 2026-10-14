@@ -18,7 +18,7 @@ thread and go back to the user.
 | SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | SG2 wide datapath and ISA | DONE | [#4](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/4) |
 | SG3 | Quantization + export (M1)             | SG1             | SG3 | DONE | [#5](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/5) |
 | SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | Int8 matmul kernels (SG4) | DONE | [#6](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/6) |
-| SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | —              | TODO | — |
+| SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | SG5 elementwise and RMSNorm | DONE | [#7](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/7) |
 | SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | —              | TODO | — |
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | TODO | — |
 | SG8 | Stretch: single attention head (M6)    | SG6             | —              | TODO | — |
@@ -258,6 +258,14 @@ scale alignment, RMSNorm (sum of squares, rsqrt LUT, weight).
 Accept: bit-exact vs golden on random and saturating inputs, including
 −128, LUT endpoints, and zero vectors for RMSNorm.
 Verify: `make test_xf_elementwise && make test_xf_rmsnorm`
+
+Bindings (SG5, for SG6): `xf/elementwise.py` `requant(img, x, out, m, s)`,
+`relu(img, x, out)`, `swiglu(img, gate, up, lut, out, m, s)`,
+`residual_add(img, a, b, out, ma, mb, s)`,
+`rmsnorm(img, x, w, lut, out, lut_shift, m, s)`, same convention as
+`kernels.matmul`: `<out>.args` allocated, `(program, threads)` returned, one
+thread per output element (≤ 255). Kernels `kernels/{requant,relu,swiglu,
+residual_add,rmsnorm}.asm`; `rmsnorm` has each thread sum its own row.
 
 ### SG6 — MLP block end-to-end (M4)
 Launch chain: RMSNorm → gate, up matmuls → SwiGLU → down matmul →

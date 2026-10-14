@@ -27,6 +27,7 @@ thread and go back to the user.
 | SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
 | SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | — | TODO | — |
+| SG14 | AUDIT-6 H1: attention scores precision | SG13 | — | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -423,6 +424,23 @@ the new chain; within TOL of nanoGPT on `rng(7).standard_normal((2000, 4, 8))` s
 and on the 200k held-out inputs; attention TOL re-measured in contract 8; fixtures regenerated and
 `test_xf_attention` bit-exact; the `xf/tests/test_audit5.py` xfail markers removed and passing (the test
 updated to the new reference).
+Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_attention`
+
+### SG14 — AUDIT-6 H1: attention scores precision
+`scores` is computed from int8 `q` and `k`, whose rounding errors are multiplied by the other operand
+in the dot product; inputs that saturate nothing reach 10.66 y LSB against TOL 3, and one-channel-x4
+inputs exceed TOL on 61 of 200k. The Gaussian held-out maximum (2.75 LSB) is not a bound. See AUDIT-6.md H1.
+Any fix changes contract 4 (matmul operands), the attention layout, or contract 8's TOL, so per Rules
+it goes to the user before the build starts.
+
+Runs after SG13, which may absorb most of it: in a float emulation of SG13's `ln_1` chain the same search
+reaches 2.83 LSB. First port `test_audit6.py` to SG13's chain and re-run the AUDIT-6 hill climb; if the chain
+stays within TOL, SG14 reduces to the `export --check` addition below.
+
+Accept: either `scores` precision raised (e.g. wider `q`/`k` operands for the scores matmul, or `Wq·Wkᵀ`
+folded so one operand is exact) or the attention TOL re-derived from a worst-case error bound, recorded in
+contract 8; both `xf/tests/test_audit6.py` xfail markers removed and passing; kernels bit-exact vs the new
+golden; `export --check` also asserts TOL on a non-Gaussian unsaturated set (e.g. the outlier-channel inputs).
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_attention`
 
 ## Audit

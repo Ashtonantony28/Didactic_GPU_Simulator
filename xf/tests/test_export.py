@@ -1,5 +1,4 @@
 """Exporter: fixed-point selection, and the committed mlp_block fixtures (torch-free)."""
-import os
 
 import numpy as np
 import pytest
@@ -90,10 +89,13 @@ def test_no_overflow_on_any_int8_input(fx, seed):
 
 
 @pytest.mark.parametrize("block", export.BLOCKS)
-def test_export_matches_fixtures(tmp_path, block):
-    pytest.importorskip("torch")
-    if not os.environ.get("NANOGPT_DIR"):
-        pytest.skip("NANOGPT_DIR not set")
-    *_, files = export.fixture_bytes(os.environ["NANOGPT_DIR"], tmp_path, block)
+def test_export_matches_fixtures(nanogpt_dir, tmp_path, block):
+    *_, files = export.fixture_bytes(nanogpt_dir, tmp_path, block)
     for name, data in files.items():
         assert (fixture.FIXTURE_DIR / name).read_bytes() == data
+
+
+@pytest.mark.parametrize("block", export.BLOCKS)
+def test_heldout_activations_unsaturated(nanogpt_dir, block):
+    _, peak = export.heldout(nanogpt_dir, block, fixture.load(fixture.FIXTURE_DIR / f"{block}_0.json")["image"])
+    assert max(peak.values()) <= 127.5, f"{block}: activations saturate on held-out inputs: {peak}"

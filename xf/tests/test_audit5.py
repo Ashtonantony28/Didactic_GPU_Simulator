@@ -1,5 +1,4 @@
 """AUDIT-5 H1: with ln_1 in front, the attention head stays within TOL at every input loudness, like the MLP block."""
-import os
 
 import numpy as np
 import pytest
@@ -8,14 +7,6 @@ from xf import attention, export, fixture
 
 MLP = fixture.load(fixture.FIXTURE_DIR / "mlp_block_0.json")["image"]
 ATTN = fixture.load(fixture.FIXTURE_DIR / "attention_0.json")["image"]
-
-
-@pytest.fixture(scope="module")
-def blk():
-    pytest.importorskip("torch")
-    if not os.environ.get("NANOGPT_DIR"):
-        pytest.skip("NANOGPT_DIR not set")
-    return export.build_block(os.environ["NANOGPT_DIR"])
 
 
 def _worst(img, a, golden, ref, out):

@@ -1,5 +1,4 @@
 """AUDIT-6 repros: attention TOL on inputs that saturate nothing (within TOL since SG13's ln_1; SG14 re-runs the search)."""
-import os
 
 import numpy as np
 import pytest
@@ -16,23 +15,20 @@ def _scale(name):
     return ATTN["image"].segments[name]["scale"]
 
 
-def _err(xq):
-    pytest.importorskip("torch")
-    if not os.environ.get("NANOGPT_DIR"):
-        pytest.skip("NANOGPT_DIR not set")
-    ref = export.float_attention(export.build_block(os.environ["NANOGPT_DIR"]), xq * _scale("x"))
+def _err(blk, xq):
+    ref = export.float_attention(blk, xq * _scale("x"))
     peak = max(float(np.abs(v).max()) / _scale(k) for k, v in ref.items() if k != "x")
     assert peak <= 127.5, f"input saturates ({peak:.1f} LSB)"
     y = attention.attention_int(ATTN["image"], xq)["y"] * _scale("y")
     return np.abs(y - ref["y"]).max(axis=(-2, -1))
 
 
-def test_attention_tol_unsaturated_worst():
-    err = _err(np.array(WORST))
+def test_attention_tol_unsaturated_worst(blk):
+    err = _err(blk, np.array(WORST))
     assert err <= ATTN["tol"], f"{err / _scale('y'):.2f} LSB"
 
 
-def test_attention_tol_outlier_channel():
+def test_attention_tol_outlier_channel(blk):
     x = np.random.default_rng(99).standard_normal((200_000, export.T, export.N_EMBD)) * np.r_[4, [1] * 7]
-    err = _err(export.quantize(x, _scale("x")))
+    err = _err(blk, export.quantize(x, _scale("x")))
     assert err.max() <= ATTN["tol"], f"{(err > ATTN['tol']).sum()} of {len(err)} inputs, max {err.max() / _scale('y'):.2f} LSB"

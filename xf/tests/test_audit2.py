@@ -1,5 +1,4 @@
 """AUDIT-2 repros: TOL on 200k held-out inputs."""
-import os
 
 import numpy as np
 import pytest
@@ -15,28 +14,21 @@ def _scale(img, name):
     return img.segments[name]["scale"]
 
 
-def _nanogpt():
-    pytest.importorskip("torch")
-    if not os.environ.get("NANOGPT_DIR"):
-        pytest.skip("NANOGPT_DIR not set")
-    return export.build_block(os.environ["NANOGPT_DIR"])
-
-
 def _heldout(img):
     x = np.random.default_rng(HELDOUT_SEED).standard_normal((HELDOUT_N, export.T, export.N_EMBD))
     return export.quantize(x, _scale(img, "x"))
 
 
-def test_mlp_tol_on_heldout():
-    blk, img = _nanogpt(), MLP["image"]
+def test_mlp_tol_on_heldout(blk):
+    img = MLP["image"]
     xq = _heldout(img)
     out = export.mlp_block_int(img, xq)["out"] * _scale(img, "out")
     err = np.abs(out - export.float_acts(blk, xq * _scale(img, "x"))["out"]).max(axis=(1, 2))
     assert err.max() <= MLP["tol"], f"{(err > MLP['tol']).sum()} of {len(err)} inputs, max {err.max() / _scale(img, 'out'):.2f} LSB"
 
 
-def test_attention_tol_on_heldout():
-    blk, img = _nanogpt(), ATTN["image"]
+def test_attention_tol_on_heldout(blk):
+    img = ATTN["image"]
     xq = _heldout(img)
     ref = export.float_attention(blk, xq * _scale(img, "x"))["y"]
     y = attention.attention_int(img, xq)["y"] * _scale(img, "y")

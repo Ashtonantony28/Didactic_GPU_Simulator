@@ -28,7 +28,7 @@ thread and go back to the user.
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
 | SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | SG13 attention input norm | DONE | [#20](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/20) |
 | SG14 | AUDIT-6 H1: attention scores precision | SG13 | — | TODO | — |
-| SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | — | TODO | — |
+| SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | SG15: make the merge gate run the real tolerance checks | DONE | [#24](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/24) |
 | SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | — | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
@@ -49,7 +49,7 @@ without further approval gates.
   with its thread title, and delegates bounded, test-driven tasks to at
   most one or two subagents at a time.
 - A thread merges its own PR once its Verify command passes from a clean
-  checkout and the full existing suite (`make test_all` and
+  checkout and the full existing suite (`NANOGPT_DIR=... make test_all` and
   `make -j4 matrix`) still passes; it then sets its row
   to `DONE` with the PR link and any open issues, in that same PR.
 - When a row turns `DONE`, the coordinator starts every sub-goal whose
@@ -68,9 +68,10 @@ install /tmp/sv2v/*/sv2v /usr/local/bin/
 git checkout bench/results                   # tests overwrite these until SG0 lands
 ```
 
-SG3 additionally needs `pip install torch` (from PyPI; download.pytorch.org
+Every thread also needs `pip install torch` (from PyPI; download.pytorch.org
 is blocked by the egress proxy) and a clone of nanoGPT Extended at `03dbab8`
-in `$NANOGPT_DIR`. Only `xf/export.py` imports torch.
+in `$NANOGPT_DIR`: `make test_all` fails without them (SG15). Only `xf/export.py`
+imports torch.
 
 ## Facts the plan is built on
 

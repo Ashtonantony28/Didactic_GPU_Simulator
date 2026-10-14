@@ -81,10 +81,11 @@ def test_no_overflow_on_any_int8_input(fx, seed):
         assert out.min() >= -128 and out.max() <= 127
 
 
-def test_export_matches_fixtures(tmp_path):
+@pytest.mark.parametrize("block", export.BLOCKS)
+def test_export_matches_fixtures(tmp_path, block):
     pytest.importorskip("torch")
     if not os.environ.get("NANOGPT_DIR"):
         pytest.skip("NANOGPT_DIR not set")
-    *_, files = export.fixture_bytes(os.environ["NANOGPT_DIR"], tmp_path)
+    *_, files = export.fixture_bytes(os.environ["NANOGPT_DIR"], tmp_path, block)
     for name, data in files.items():
         assert (fixture.FIXTURE_DIR / name).read_bytes() == data

@@ -28,14 +28,15 @@ ATTN_TOL_LSB, ATTN_N_CALIB, ATTN_N_CHECK = 3, 1 << 16, 2000
 ACTS = ("x", "h", "gate", "up", "act", "down", "out")
 # max-abs calibration saturates on rare held-out inputs (AUDIT-2 H1); check measures HELDOUT_N of them
 HEADROOM, HELDOUT_SEED, HELDOUT_N = 1.5, 12345, 200_000
-HELDOUT_TOL = ("attention",)    # mlp_block joins once SG9 fixes the rsqrt buckets (AUDIT-1 H1)
+HELDOUT_TOL = ("mlp_block", "attention")
 
 
-def fixed_point(ms, bounds):
-    """Largest s in [0, 31] with M_i = round(m_i * 2^s) and sum(bound_i * M_i) + 2^(s-1) <= INT32_MAX."""
-    for s in range(31, -1, -1):
+def fixed_point(ms, bounds, k=0):
+    """Largest s in [0, 31 - k] with M_i = round(m_i * 2^s) and sum(bound_i * M_i) + 2^(s+k-1) <= INT32_MAX;
+    k is the largest extra requant shift (rmsnorm_int's normalization steps)."""
+    for s in range(31 - k, -1, -1):
         mi = [round(m * (1 << s)) for m in ms]
-        if sum(b * m for b, m in zip(bounds, mi)) + ((1 << (s - 1)) if s else 0) <= golden.I32[1]:
+        if sum(b * m for b, m in zip(bounds, mi)) + ((1 << (s + k - 1)) if s + k else 0) <= golden.I32[1]:
             if min(mi) < 1:
                 raise ValueError(f"multipliers {ms} vanish at shift {s}")
             return mi, s
@@ -54,8 +55,9 @@ def calib_scales(acts, sx):
     return {k: sx if k == "x" else HEADROOM * maxabs_scale(v) for k, v in acts.items()}
 
 
-def rsqrt_shift(d):
-    return max(0, math.ceil(math.log2(d * 128 * 128 / RSQRT_LEN)))
+def rsqrt_kmax(d, n=RSQRT_LEN):
+    """Normalization steps rmsnorm_int takes on the loudest int8 row."""
+    return int(golden.rsqrt_index(d * 128 * 128, n)[1])
 
 
 def build_image(weights, scales):
@@ -65,10 +67,9 @@ def build_image(weights, scales):
     sw = {k: maxabs_scale(v) for k, v in weights.items()}
     d, hidden = weights["w_gate"].shape
 
-    shift = rsqrt_shift(d)
-    mid = (np.arange(RSQRT_LEN) << shift) + ((1 << shift) - 1) / 2
-    r = 1 / np.sqrt(sc["x"] ** 2 * mid / d + EPS) * sc["x"] * sw["norm_w"] / sc["h"]
-    (rmax,), norm_s = fixed_point([r.max()], [128 * int(np.abs(w["norm_w"]).max())])
+    ss = np.arange(1, RSQRT_LEN)    # rsqrt_lut[0] only meets x = 0
+    r = np.r_[0, 1 / np.sqrt(sc["x"] ** 2 * ss / d + EPS) * sc["x"] * sw["norm_w"] / sc["h"]]
+    (rmax,), norm_s = fixed_point([r.max()], [128 * int(np.abs(w["norm_w"]).max())], rsqrt_kmax(d))
     rsqrt_lut = np.rint(r * (1 << norm_s)).astype(np.int64)
     assert rsqrt_lut.max() == rmax
 
@@ -91,7 +92,7 @@ def build_image(weights, scales):
     img.alloc("x", [T, d], "i8", sc["x"])
     img.alloc("norm_w", [d], "i8", sw["norm_w"], w["norm_w"])
     img.alloc("rsqrt_lut", [RSQRT_LEN], "i32", data=rsqrt_lut)
-    for name, v in (("norm_shift", shift), ("norm_M", 1), ("norm_s", norm_s)):
+    for name, v in (("norm_M", 1), ("norm_s", norm_s)):
         img.alloc(name, [1], "i32", data=[v])
     img.alloc("h", [T, d], "i8", sc["h"])
     for proj, m, s in (("gate", gate_m, gate_s), ("up", up_m, up_s)):
@@ -119,8 +120,7 @@ def _c(img, name):
 
 def mlp_block_int(img, x):
     """Golden integer MLP block on image constants: every intermediate, keyed by segment."""
-    o = {"h": golden.rmsnorm_int(x, img.read("norm_w"), img.read("rsqrt_lut"), _c(img, "norm_shift"),
-                                 _c(img, "norm_M"), _c(img, "norm_s"))}
+    o = {"h": golden.rmsnorm_int(x, img.read("norm_w"), img.read("rsqrt_lut"), _c(img, "norm_M"), _c(img, "norm_s"))}
     for proj in ("gate", "up"):
         o[proj] = golden.requant(golden.matmul_i8(o["h"], img.read(f"w_{proj}")), _c(img, f"{proj}_M"), _c(img, f"{proj}_s"))
     o["act"] = golden.swiglu_lut(o["gate"], o["up"], img.read("silu_lut"), _c(img, "act_M"), _c(img, "act_s"))
@@ -134,9 +134,10 @@ def check_bounds(img):
     def rnd(s):
         return (1 << (s - 1)) if s else 0
 
+    kmax = rsqrt_kmax(img.segments["x"]["shape"][-1], len(img.read("rsqrt_lut")))
     worst = {
         "norm": 128 * int(np.abs(img.read("norm_w")).max()) * int(img.read("rsqrt_lut").max())
-        * _c(img, "norm_M") + rnd(_c(img, "norm_s")),
+        * _c(img, "norm_M") + rnd(_c(img, "norm_s") + kmax),
         "act": 128 * int(np.abs(img.read("silu_lut")).max()) * _c(img, "act_M") + rnd(_c(img, "act_s")),
         "res": 128 * (_c(img, "res_Ma") + _c(img, "res_Mb")) + rnd(_c(img, "res_s")),
     }

@@ -32,8 +32,16 @@ def test_fixed_point_rejects_impossible():
         export.fixed_point([1e-12], [1 << 24])
 
 
-def test_rsqrt_shift_covers_int8_rows():
-    assert (8 * 128 * 128) >> export.rsqrt_shift(8) <= export.RSQRT_LEN
+def test_rsqrt_relative_error_bounded():
+    """lut[idx] / 2^k against the exact rsqrt every int8 row's sum of squares needs (AUDIT-1 H1)."""
+    img = fixture.load(FIXTURES[0])["image"]
+    sx, sh, sw = (img.segments[n]["scale"] for n in ("x", "h", "norm_w"))
+    d = img.segments["x"]["shape"][-1]
+    ss = np.arange(1, d * 128 * 128 + 1)
+    idx, k = golden.rsqrt_index(ss, export.RSQRT_LEN)
+    got = img.read("rsqrt_lut")[idx] / 2.0 ** (k + int(img.read("norm_s")[0]))
+    want = 1 / np.sqrt(sx ** 2 * ss / d + export.EPS) * sx * sw / sh
+    assert np.abs(got / want - 1).max() < 2 ** -8
 
 
 def test_fixtures_committed():

@@ -23,7 +23,7 @@ def launches(img, kind="tiled", acts=None):
     c = {n: int(img.read(n)[0]) for n, seg in img.segments.items() if seg["shape"] == [1]}
     mm = lambda w, x, out: kernels.matmul(img, kind, a[x], w, a[out], c[f"{out}_M"], c[f"{out}_s"])
     return [
-        (a["h"], ew.rmsnorm(img, a["x"], "norm_w", "rsqrt_lut", a["h"], c["norm_shift"], c["norm_M"], c["norm_s"])),
+        (a["h"], ew.rmsnorm(img, a["x"], "norm_w", "rsqrt_lut", a["h"], c["norm_M"], c["norm_s"])),
         (a["gate"], mm("w_gate", "h", "gate")),
         (a["up"], mm("w_up", "h", "up")),
         (a["act"], ew.swiglu(img, a["gate"], a["up"], "silu_lut", a["act"], c["act_M"], c["act_s"])),

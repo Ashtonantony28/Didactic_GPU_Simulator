@@ -121,16 +121,17 @@ def test_residual_add_saturates():
     assert golden.residual_add(np.array([127, -128]), np.array([127, -128]), 1, 1, 0).tolist() == [127, -128]
 
 
-def _rsqrt_lut(shift, n=256):
-    return np.array([round((1 << 12) / math.sqrt(((i + 0.5) * (1 << shift)) / 8 + 1)) for i in range(n)])
+def _rsqrt_lut(n=256):
+    return np.array([0] + [round((1 << 12) / math.sqrt(i / 8 + 1)) for i in range(1, n)])
 
 
-def ref_rmsnorm(x, w, lut, shift, m, s):
+def ref_rmsnorm(x, w, lut, m, s):
     out = []
     for row in x:
-        ss = sum(int(v) * int(v) for v in row)
-        r = int(lut[min(ss >> shift, len(lut) - 1)])
-        out.append([ref_requant(int(v) * int(g) * r, m, s) for v, g in zip(row, w)])
+        ss, k = sum(int(v) * int(v) for v in row), 0
+        while ss >= len(lut):
+            ss, k = ss // 4, k + 1
+        out.append([ref_requant(int(v) * int(g) * int(lut[ss]), m, s + k) for v, g in zip(row, w)])
     return out
 
 
@@ -138,24 +139,32 @@ def ref_rmsnorm(x, w, lut, shift, m, s):
 def test_rmsnorm_random(seed):
     rng = np.random.default_rng(seed)
     x, w = rand_i8(rng, (4, 8)), rand_i8(rng, (8,))
-    lut = _rsqrt_lut(9)
-    assert golden.rmsnorm_int(x, w, lut, 9, 1, 14).tolist() == ref_rmsnorm(x, w, lut, 9, 1, 14)
+    x[1] >>= int(rng.integers(1, 8))   # quiet rows take fewer normalization steps
+    lut = _rsqrt_lut()
+    assert golden.rmsnorm_int(x, w, lut, 1, 14).tolist() == ref_rmsnorm(x, w, lut, 1, 14)
 
 
 def test_rmsnorm_zero_and_extreme_rows():
-    x = np.array([[0] * 8, [-128] * 8, [127] * 8, EDGE + [0, 0]])
+    x = np.array([[0] * 8, [-128] * 8, [127] * 8, EDGE + [0, 0], [1] + [0] * 7, [15, 0, 0, 0, 0, 0, 0, 1]])
     w = np.array([127, -128, 1, -1, 0, 64, -64, 127])
-    lut = _rsqrt_lut(9)
-    got = golden.rmsnorm_int(x, w, lut, 9, 1, 14)
-    assert got.tolist() == ref_rmsnorm(x, w, lut, 9, 1, 14)
+    lut = _rsqrt_lut()
+    got = golden.rmsnorm_int(x, w, lut, 1, 14)
+    assert got.tolist() == ref_rmsnorm(x, w, lut, 1, 14)
     assert got[0].tolist() == [0] * 8
-    # sum of squares 8*16384 >> 9 = 256 clamps to the last LUT entry
-    assert golden.rmsnorm_int(x[1:2], w, lut, 9, 1, 14).tolist() == ref_rmsnorm(x[1:2], w, lut, 9, 1, 14)
+
+
+@pytest.mark.parametrize("n", [4, 5, 256, 1024])
+def test_rsqrt_index(n):
+    ss = np.arange(8 * 128 * 128 + 1)
+    idx, k = golden.rsqrt_index(ss, n)
+    assert (idx < n).all() and ((k == 0) | (idx >= n // 4)).all()
+    assert ((idx << (2 * k)) <= ss).all() and (ss < (idx + 1) << (2 * k)).all()
+    assert (k[ss < n] == 0).all() and (k[1:] >= k[:-1]).all()
 
 
 def test_rmsnorm_rejects_overflowing_lut():
     with pytest.raises(OverflowError):
-        golden.rmsnorm_int(np.full((1, 8), -128), np.full(8, -128), np.full(256, 1 << 20), 9, 1, 0)
+        golden.rmsnorm_int(np.full((1, 8), -128), np.full(8, -128), np.full(256, 1 << 20), 1, 0)
 
 
 def _exp_lut():

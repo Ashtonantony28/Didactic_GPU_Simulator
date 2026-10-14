@@ -5,6 +5,7 @@ one thread per output element. Semantics are xf.golden's, bit for bit.
 """
 import math
 
+from . import golden
 from .kernels import program
 
 
@@ -56,17 +57,18 @@ def residual_add(img, a, b, out, ma, mb, s):
     return _bind(img, "residual_add", out, [img.base(a), img.base(b), img.base(out), ma, mb, s, _rnd(s)])
 
 
-def rmsnorm(img, x, w, lut, out, lut_shift, m, s):
-    """out = golden.rmsnorm_int(x, w, lut, lut_shift, m, s) over the rows of x (T, d)."""
+def rmsnorm(img, x, w, lut, out, m, s):
+    """out = golden.rmsnorm_int(x, w, lut, m, s) over the rows of x (T, d)."""
     _same(img, out, x)
     d = _shape(img, x)[-1]
     if _shape(img, w) != [d]:
         raise ValueError(f"{w} shape {_shape(img, w)} != [{d}]")
-    if not 0 <= lut_shift <= 31:
-        raise ValueError(f"lut_shift {lut_shift} outside [0, 31]")
     n = math.prod(_shape(img, lut))
+    kmax = int(golden.rsqrt_index(d * 128 * 128, n)[1])
+    if not 0 <= s <= 30 - kmax:
+        raise ValueError(f"shift {s} + {kmax} normalization steps outside [0, 30]")
     return _bind(img, "rmsnorm", out, [img.base(x), img.base(w), img.base(lut), img.base(out),
-                                       d, lut_shift, n - 1, m, s, _rnd(s)])
+                                       d, max(kmax, 1), n - 1, m, s, 1 << s])
 
 
 def transpose(img, x, out):

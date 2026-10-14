@@ -14,6 +14,9 @@ from .memory import Memory
 from .setup import setup, launch
 from .logger import logger
 
+# Memory latency in cycles for every test; `make matrix` sets it for one configuration.
+MEM_LATENCY = int(os.environ.get("MEM_LATENCY", 0))
+
 
 def _safe_int(v) -> int:
     try:
@@ -28,7 +31,7 @@ async def run_kernel(dut, program: List[int], data: List[int], threads: int,
                      program_channels: int = 1,
                      data_addr_bits: Optional[int] = None, data_data_bits: Optional[int] = None,
                      data_channels: int = 4,
-                     mem_latency: int = 0) -> dict:
+                     mem_latency: int = MEM_LATENCY) -> dict:
     bits, addr = data_bus(dut)
     data_data_bits = data_data_bits or bits
     data_addr_bits = data_addr_bits or addr
@@ -82,7 +85,7 @@ class Launch:
     timeout_cycles: int = 20_000
 
 
-async def run_launches(dut, image, launches: List[Launch], mem_latency: int = 0):
+async def run_launches(dut, image, launches: List[Launch], mem_latency: int = MEM_LATENCY):
     """Run kernels back to back on one data memory loaded from an xf.image.Image.
 
     The GPU is reset before every launch; data memory persists. Returns

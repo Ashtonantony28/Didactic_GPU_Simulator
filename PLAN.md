@@ -25,7 +25,7 @@ thread and go back to the user.
 | SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | —              | TODO    | —  |
 | SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | —              | TODO    | —  |
 | SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
-| SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | —              | TODO    | —  |
+| SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -45,7 +45,8 @@ without further approval gates.
   with its thread title, and delegates bounded, test-driven tasks to at
   most one or two subagents at a time.
 - A thread merges its own PR once its Verify command passes from a clean
-  checkout and the full existing suite still passes; it then sets its row
+  checkout and the full existing suite (`make test_all` and
+  `make -j4 matrix`) still passes; it then sets its row
   to `DONE` with the PR link and any open issues, in that same PR.
 - When a row turns `DONE`, the coordinator starts every sub-goal whose
   dependencies are all `DONE`, keeping at most two build threads running.
@@ -384,6 +385,8 @@ directory so they can run in parallel; both exit non-zero on any failure; the el
 launch timeout raised so NUM_CORES=1 passes; the AUDIT-3 H2 I-cache mutant fails the matrix target;
 the Dispatch protocol's "full existing suite" names the new targets.
 Verify: the new full-suite and matrix targets pass from a clean checkout, and the AUDIT-3 H2 `sed` mutant makes the matrix target fail.
+
+Done: `make test_all` (22 cocotb modules, 3 warp-scheduler targets, `harness_selftest`, xf pytest) and `make -j4 matrix` (regression and `test_l1d_indepth` at 8 bits, regression and every `test_xf_*` at 32 bits, per configuration in `build/matrix/<cfg>`; the latency run uses `MEM_LATENCY=3`). Both green; the matrix takes about 53 min at -j4 on 4 cores, NUM_CORES=1 and the latency run being the long poles. The I-cache mutant fails `matrix_icache` (matmul, conv1d, divergent_relu, tiled_matmul time out). `regression`/`regression_xf` now run every module and list the failures instead of stopping at the first.
 
 ## Audit
 

@@ -12,7 +12,7 @@ FIXTURES = [fixture.load(fixture.FIXTURE_DIR / f"mlp_block_{i}.json") for i in r
 
 async def check(dut, img, cases):
     """cases: [(out segment, (program, threads), golden)]; one launch per case on one image."""
-    _, mem = await run_launches(dut, img, [Launch(p, t, out) for out, (p, t), _ in cases])
+    _, mem = await run_launches(dut, img, [Launch(p, t, out, timeout_cycles=200_000) for out, (p, t), _ in cases])
     bad = [out for out, _, want in cases if not np.array_equal(img.read(out, mem.memory), want)]
     assert not bad, f"mismatch: {bad}"
 

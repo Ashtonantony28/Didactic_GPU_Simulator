@@ -1,4 +1,4 @@
-"""AUDIT-5 repros: the attention head has no ln_1, so its error grows with input loudness; the MLP block does not."""
+"""AUDIT-5 H1: with ln_1 in front, the attention head stays within TOL at every input loudness, like the MLP block."""
 import os
 
 import numpy as np
@@ -30,8 +30,15 @@ def test_mlp_block_within_tol_on_louder_inputs(blk, a):
     assert worst <= export.TOL_LSB, f"max error {worst:.2f} LSB"
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-5 H1: attention has no ln_1; louder inputs saturate q, k, v, scores")
-@pytest.mark.parametrize("a", [2.0, 3.0])
-def test_attention_within_tol_on_louder_inputs(blk, a):
-    worst = _worst(ATTN, a, attention.attention_int, lambda x: export.float_attention(blk.attn, x), "y")
+@pytest.mark.parametrize("a", [0.05, 0.1, 0.3, 1.0, 2.0, 3.0, 10.0])
+def test_attention_within_tol_across_input_scales(blk, a):
+    worst = _worst(ATTN, a, attention.attention_int, lambda x: export.float_attention(blk, x), "y")
     assert worst <= export.ATTN_TOL_LSB, f"max error {worst:.2f} LSB"
+
+
+@pytest.mark.parametrize("a", [0.05, 0.1])
+def test_attention_not_vacuous_on_quiet_inputs(blk, a):
+    sx, sy = ATTN.segments["x"]["scale"], ATTN.segments["y"]["scale"]
+    xq = export.quantize(np.random.default_rng(7).standard_normal((2000, export.T, export.N_EMBD)) * a, sx)
+    zero_passes = np.abs(export.float_attention(blk, xq * sx)["y"]).max(axis=(1, 2)) <= export.ATTN_TOL_LSB * sy
+    assert zero_passes.mean() < 0.01, f"an all-zero y passes {zero_passes.mean():.1%} of inputs"

@@ -36,9 +36,9 @@ def test_mlp_tol_on_heldout():
 
 
 def test_attention_tol_on_heldout():
-    attn, img = _nanogpt().attn, ATTN["image"]
+    blk, img = _nanogpt(), ATTN["image"]
     xq = _heldout(img)
-    ref = export.float_attention(attn, xq * _scale(img, "x"))["y"]
+    ref = export.float_attention(blk, xq * _scale(img, "x"))["y"]
     y = attention.attention_int(img, xq)["y"] * _scale(img, "y")
     err = np.abs(y - ref).max(axis=(1, 2))
     assert err.max() <= ATTN["tol"], f"{(err > ATTN['tol']).sum()} of {len(err)} inputs, max {err.max() / _scale(img, 'y'):.2f} LSB"

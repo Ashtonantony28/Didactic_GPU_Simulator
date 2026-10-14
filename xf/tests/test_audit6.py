@@ -1,4 +1,4 @@
-"""AUDIT-6 repros: attention TOL on inputs that saturate nothing."""
+"""AUDIT-6 repros: attention TOL on inputs that saturate nothing (within TOL since SG13's ln_1; SG14 re-runs the search)."""
 import os
 
 import numpy as np
@@ -20,20 +20,18 @@ def _err(xq):
     pytest.importorskip("torch")
     if not os.environ.get("NANOGPT_DIR"):
         pytest.skip("NANOGPT_DIR not set")
-    ref = export.float_attention(export.build_block(os.environ["NANOGPT_DIR"]).attn, xq * _scale("x"))
+    ref = export.float_attention(export.build_block(os.environ["NANOGPT_DIR"]), xq * _scale("x"))
     peak = max(float(np.abs(v).max()) / _scale(k) for k, v in ref.items() if k != "x")
     assert peak <= 127.5, f"input saturates ({peak:.1f} LSB)"
     y = attention.attention_int(ATTN["image"], xq)["y"] * _scale("y")
     return np.abs(y - ref["y"]).max(axis=(-2, -1))
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-6 H1: int8 q/k rounding error in scores is unbounded in y LSB")
 def test_attention_tol_unsaturated_worst():
     err = _err(np.array(WORST))
     assert err <= ATTN["tol"], f"{err / _scale('y'):.2f} LSB"
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-6 H1: TOL holds only for isotropic Gaussian inputs")
 def test_attention_tol_outlier_channel():
     x = np.random.default_rng(99).standard_normal((200_000, export.T, export.N_EMBD)) * np.r_[4, [1] * 7]
     err = _err(export.quantize(x, _scale("x")))

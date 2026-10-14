@@ -14,7 +14,7 @@ thread and go back to the user.
 | ID  | Sub-goal                               | Depends on      | Owner (thread) | Status  | PR |
 |-----|----------------------------------------|-----------------|----------------|---------|----|
 | SG0 | Harness hygiene                        | —               | Harness hygiene (SG0) | DONE | [#2](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/2) |
-| SG1 | Shared interfaces                      | SG0             | —              | TODO | — |
+| SG1 | Shared interfaces                      | SG0             | Shared interfaces (SG1) | DONE | [#3](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/3) |
 | SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | —              | TODO | — |
 | SG3 | Quantization + export (M1)             | SG1             | —              | TODO | — |
 | SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | —              | TODO | — |
@@ -23,6 +23,8 @@ thread and go back to the user.
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | TODO | — |
 | SG8 | Stretch: single attention head (M6)    | SG6             | —              | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
+
+SG1 open issue: `softmax_lut` rows sum to `one` within T/2 LSB (2 at T=4); SG8's "1 LSB" criterion needs revisiting.
 
 Concurrency: at most two build threads at once. SG0 → SG1 → SG2 run
 alone. SG3 may start in parallel with SG2. SG4 ∥ SG5 after SG2. SG6, SG7,

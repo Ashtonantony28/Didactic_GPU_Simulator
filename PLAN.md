@@ -26,6 +26,7 @@ thread and go back to the user.
 | SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | SG10 calibration headroom | DONE | [#14](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/14) |
 | SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
+| SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | — | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -408,6 +409,21 @@ the Dispatch protocol's "full existing suite" names the new targets.
 Verify: the new full-suite and matrix targets pass from a clean checkout, and the AUDIT-3 H2 `sed` mutant makes the matrix target fail.
 
 Done: `make test_all` (22 cocotb modules, 3 warp-scheduler targets, `harness_selftest`, xf pytest) and `make -j4 matrix` (regression and `test_l1d_indepth` at 8 bits, regression and every `test_xf_*` at 32 bits, per configuration in `build/matrix/<cfg>`; the latency run uses `MEM_LATENCY=3`). Both green; the matrix takes about 53 min at -j4 on 4 cores, NUM_CORES=1 and the latency run being the long poles. The I-cache mutant fails `matrix_icache` (matmul, conv1d, divergent_relu, tiled_matmul time out). `regression`/`regression_xf` now run every module and list the failures instead of stopping at the first.
+
+### SG13 — AUDIT-5 H1: ln_1 in front of the attention head
+The head runs on raw `x`, but nanoGPT's block runs `attn(ln_1(x))`. Without the norm its q, k, v and scores
+scale with the input, so it exceeds TOL on louder inputs (55.8 LSB at 3× the calibration scale, 98.6 LSB on
+uniform int8) and passes vacuously on quiet ones (an all-zero `y` passes 99.9 % of inputs at 0.05×). See
+AUDIT-5.md H1. Reuses the rmsnorm kernel and `rmsnorm_int`; no ISA or contract 1–7 change, but the
+attention fixture layout (SG8 chain) and contract 8's attention entry change.
+
+Accept: attention chain is `ln_1` (rmsnorm launch, nanoGPT `ln_1` weight) → q, k, v → … → y, with the
+reference `blk.attn(blk.ln_1(x))` (adding the residual `x + …` is optional, round-1 M1); scales calibrated on
+the new chain; within TOL of nanoGPT on `rng(7).standard_normal((2000, 4, 8))` scaled by 0.1, 0.3, 1, 2 and 3
+and on the 200k held-out inputs; attention TOL re-measured in contract 8; fixtures regenerated and
+`test_xf_attention` bit-exact; the `xf/tests/test_audit5.py` xfail markers removed and passing (the test
+updated to the new reference).
+Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_attention`
 
 ## Audit
 

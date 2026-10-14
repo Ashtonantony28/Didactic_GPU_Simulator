@@ -1,4 +1,4 @@
-"""AUDIT-2 repros: TOL on 200k held-out inputs. Strict xfails until the named sub-goals land."""
+"""AUDIT-2 repros: TOL on 200k held-out inputs. The MLP test is a strict xfail until SG9 lands."""
 import os
 
 import numpy as np
@@ -27,7 +27,7 @@ def _heldout(img):
     return export.quantize(x, _scale(img, "x"))
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-2 H1 saturation tail (SG10) and AUDIT-1 H1 rsqrt buckets (SG9)")
+@pytest.mark.xfail(strict=True, reason="AUDIT-1 H1 rsqrt buckets (SG9); the AUDIT-2 H1 saturation tail is fixed by SG10")
 def test_mlp_tol_on_heldout():
     blk, img = _nanogpt(), MLP["image"]
     xq = _heldout(img)
@@ -36,11 +36,10 @@ def test_mlp_tol_on_heldout():
     assert err.max() <= MLP["tol"], f"{(err > MLP['tol']).sum()} of {len(err)} inputs, max {err.max() / _scale(img, 'out'):.2f} LSB"
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-2 H1: y and v saturate on held-out inputs (SG10)")
 def test_attention_tol_on_heldout():
     attn, img = _nanogpt().attn, ATTN["image"]
     xq = _heldout(img)
     ref = export.float_attention(attn, xq * _scale(img, "x"))["y"]
-    y = np.stack([attention.attention_int(img, x)["y"] for x in xq]) * _scale(img, "y")
+    y = attention.attention_int(img, xq)["y"] * _scale(img, "y")
     err = np.abs(y - ref).max(axis=(1, 2))
     assert err.max() <= ATTN["tol"], f"{(err > ATTN['tol']).sum()} of {len(err)} inputs, max {err.max() / _scale(img, 'y'):.2f} LSB"

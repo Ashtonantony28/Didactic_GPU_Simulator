@@ -68,3 +68,11 @@ def test_no_overflow_on_any_int8_input(fx, seed):
     for x in (np.full(shape, -128), np.full(shape, 127), rng.integers(-128, 128, shape)):
         o = attention.attention_int(fx["image"], x)
         assert np.abs(o["p"].sum(axis=-1) - attention.ONE).max() <= 1
+
+
+def test_golden_batched_matches_per_input(fx):
+    x = np.random.default_rng(0).integers(-128, 128, (50, *fx["inputs"]["x"].shape))
+    got = attention.attention_int(fx["image"], x)
+    for i, xi in enumerate(x):
+        for name, v in attention.attention_int(fx["image"], xi).items():
+            assert np.array_equal(got[name][i], v), name

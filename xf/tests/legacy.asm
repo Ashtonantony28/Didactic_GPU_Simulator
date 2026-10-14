@@ -87,6 +87,30 @@ ADD R6, R5, %threadIdx
 STR R6, R4
 RET
 
+;; == test_l1d_indepth.test_read_after_write_same_thread ==
+LDR R1, %threadIdx
+LDR R1, %threadIdx
+CONST R2, #1
+ADD R1, R1, R2
+STR %threadIdx, R1
+LDR R3, %threadIdx
+CONST R4, #8
+ADD R4, R4, %threadIdx
+STR R4, R3
+RET
+
+;; == test_l1d_indepth.test_write_read_by_later_block ==
+LDR R1, %threadIdx
+MUL R2, %blockIdx, %blockDim
+ADD R2, R2, %threadIdx
+CONST R3, #8
+ADD R2, R2, R3
+STR R2, R1
+CONST R4, #7
+LDR R4, R4
+STR %threadIdx, R4
+RET
+
 ;; == test_l1d_indepth.test_l1d_disable_equivalence ==
 CONST R0, #0
 ADD R0, R0, %threadIdx

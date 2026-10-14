@@ -22,7 +22,7 @@ thread and go back to the user.
 | SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | MLP block end-to-end (SG6) | DONE | [#8](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/8) |
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | SG7 benchmarks | DONE | [#9](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/9) |
 | SG8 | Stretch: single attention head (M6)    | SG6             | Attention head (SG8) | DONE | [#10](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/10) |
-| SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | —              | TODO    | —  |
+| SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | SG9 RMSNorm precision fix | DONE | [#18](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/18) |
 | SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | SG10 calibration headroom | DONE | [#14](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/14) |
 | SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
@@ -351,6 +351,13 @@ the SG5 rmsnorm cases and the SG6 chain; MLP block within TOL of nanoGPT on
 re-measured in contract 8; since SG10 is done, also remove `test_mlp_tol_on_heldout`'s marker
 and add `"mlp_block"` to `export.HELDOUT_TOL`.
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_rmsnorm && make test_xf_mlp_block`
+
+Done: contract 4 now normalizes Σx² by powers of 4 (`golden.rsqrt_index`, at most `kmax` = 4 steps at d = 8)
+and adds the steps to the requant shift; rsqrt is within 2^-8 relative error for every reachable Σx²
+(`test_export.py`). The kernel's normalization is branch-free inside a uniform `kmax`-trip loop, so rows
+sharing a block may differ in k; `elementwise.rmsnorm` requires `s + kmax ≤ 30`. `norm_shift` is gone.
+MLP TOL re-measured in contract 8 (1.42 LSB held-out); the rmsnorm launch costs 9531 cycles (was 7175).
+No ISA change, no open issues.
 
 ### SG10 — AUDIT-2 H1: calibration headroom
 Max-abs calibration saturates activations on held-out inputs from the calibration distribution:

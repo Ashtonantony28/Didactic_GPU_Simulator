@@ -20,7 +20,7 @@ thread and go back to the user.
 | SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | Int8 matmul kernels (SG4) | DONE | [#6](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/6) |
 | SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | SG5 elementwise and RMSNorm | DONE | [#7](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/7) |
 | SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | MLP block end-to-end (SG6) | DONE | [#8](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/8) |
-| SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | TODO | — |
+| SG7 | Benchmarks (M5)                        | SG4, SG6        | SG7 benchmarks | DONE | [#9](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/9) |
 | SG8 | Stretch: single attention head (M6)    | SG6             | —              | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
@@ -289,6 +289,12 @@ table in `docs/xf-bench.md`.
 Accept: reproducible numbers (two runs equal); every row's kernel also
 passes its correctness check in the same run.
 Verify: `python3 bench/run.py --xf --label xf-matmul`
+
+Bench (SG7): `--xf --label xf-<b>` runs `test/test_xf_bench.py::bench_<b>`
+(`matmul`: SG4 shapes; `mlp`: fixture 0, all six launches) for both matmul kinds
+under default, `COALESCE=1`, `DCACHE_LINES=16` and both, writes `bench/xf-<b>.json`
+and regenerates `docs/xf-bench.md`. Tiled wins wherever M fills the 4-row tile
+(MLP block 44263 vs 60721 cycles) and loses at M = 1 (1×8×8: 4282 vs 1771).
 
 ### SG8 — Stretch: single attention head (M6)
 QKᵀ (matmul kernel reuse), scale, causal mask, fixed-point softmax

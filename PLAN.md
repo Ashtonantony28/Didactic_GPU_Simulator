@@ -17,7 +17,7 @@ thread and go back to the user.
 | SG1 | Shared interfaces                      | SG0             | Shared interfaces (SG1) | DONE | [#3](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/3) |
 | SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | SG2 wide datapath and ISA | DONE | [#4](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/4) |
 | SG3 | Quantization + export (M1)             | SG1             | SG3 | DONE | [#5](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/5) |
-| SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | Int8 matmul kernels (SG4) | DONE | [#PRNUM](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/PRNUM) |
+| SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | Int8 matmul kernels (SG4) | DONE | [#6](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/6) |
 | SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | —              | TODO | — |
 | SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | —              | TODO | — |
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | TODO | — |

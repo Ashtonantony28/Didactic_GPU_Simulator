@@ -58,6 +58,8 @@ See `ROADMAP.md` for live status. The harness invocations are:
 ```bash
 make test_matadd                                   # single test
 make regression                                    # all kernels, default params
+make test_all                                      # every test module, harness_selftest, xf pytest
+make -j4 matrix                                    # kernel, L1-D and xf tests per config
 python3 bench/run.py --phase 3 \
     --label phase-3-icache --params "ICACHE_LINES=16"
 python3 bench/run.py --phase 5 \

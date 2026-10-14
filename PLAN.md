@@ -24,7 +24,7 @@ thread and go back to the user.
 | SG8 | Stretch: single attention head (M6)    | SG6             | Attention head (SG8) | DONE | [#10](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/10) |
 | SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | —              | TODO    | —  |
 | SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | —              | TODO    | —  |
-| SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#PRNUM](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/PRNUM) |
+| SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | —              | TODO    | —  |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 

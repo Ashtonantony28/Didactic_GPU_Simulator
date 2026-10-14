@@ -3,7 +3,8 @@
     NANOGPT_DIR=... python3 -m xf.export           # write test/fixtures/xf/{mlp_block,attention}_<i>.json
     NANOGPT_DIR=... python3 -m xf.export --check   # determinism, bounds, tolerance, fixtures current
 
-Scales are symmetric per-tensor max-abs over a seeded calibration set. Every
+Scales are symmetric per-tensor max-abs over a seeded calibration set, every
+non-input activation widened by HEADROOM so held-out inputs do not saturate. Every
 requant (M, s) is chosen against the worst case over all int8 inputs, so the
 golden pipeline (and the kernels) can never overflow int32. The integer side
 (`mlp_block_int`, `check_bounds`, xf/attention.py) needs no torch.
@@ -25,6 +26,9 @@ TOL_LSB = 2
 # attention calibrates on 2^16 inputs: with 4096, k and v saturate on held-out inputs (16 LSB worst of 5000)
 ATTN_TOL_LSB, ATTN_N_CALIB, ATTN_N_CHECK = 3, 1 << 16, 2000
 ACTS = ("x", "h", "gate", "up", "act", "down", "out")
+# max-abs calibration saturates on rare held-out inputs (AUDIT-2 H1); check measures HELDOUT_N of them
+HEADROOM, HELDOUT_SEED, HELDOUT_N = 1.5, 12345, 200_000
+HELDOUT_TOL = ("attention",)    # mlp_block joins once SG9 fixes the rsqrt buckets (AUDIT-1 H1)
 
 
 def fixed_point(ms, bounds):
@@ -44,6 +48,10 @@ def quantize(x, scale):
 
 def maxabs_scale(x):
     return float(np.abs(x).max()) / 127
+
+
+def calib_scales(acts, sx):
+    return {k: sx if k == "x" else HEADROOM * maxabs_scale(v) for k, v in acts.items()}
 
 
 def rsqrt_shift(d):
@@ -184,8 +192,7 @@ def export(nanogpt_dir):
     calib = np.random.default_rng(SEED).standard_normal((N_CALIB, T, N_EMBD))
     sx = maxabs_scale(calib)
     acts = float_acts(blk, quantize(calib, sx) * sx)
-    scales = {k: maxabs_scale(acts[k]) for k in ACTS}
-    scales["x"] = sx
+    scales = calib_scales({k: acts[k] for k in ACTS}, sx)
     img = build_image(weights, scales)
     check_bounds(img)
 
@@ -226,8 +233,7 @@ def export_attention(nanogpt_dir):
     calib = np.random.default_rng(SEED).standard_normal((ATTN_N_CALIB, T, N_EMBD))
     sx = maxabs_scale(calib)
     acts = float_attention(attn, quantize(calib, sx) * sx)
-    scales = {k: maxabs_scale(v) for k, v in acts.items()}
-    scales["x"] = sx
+    scales = calib_scales(acts, sx)
     img = attention.build_image(weights, scales, T, fixed_point, quantize, maxabs_scale)
     attention.check_bounds(img)
 
@@ -253,6 +259,19 @@ def fixture_bytes(nanogpt_dir, tmp, block):
     return img, cases, worst, files
 
 
+def heldout(nanogpt_dir, block, img):
+    """-> per-input max error in output LSB, and each non-input float activation's peak in its own LSB."""
+    s = img.segments
+    xq = quantize(np.random.default_rng(HELDOUT_SEED).standard_normal((HELDOUT_N, T, N_EMBD)), s["x"]["scale"])
+    blk = build_block(nanogpt_dir)
+    if block == "mlp_block":
+        out, ref, got = "out", float_acts(blk, xq * s["x"]["scale"]), mlp_block_int(img, xq)
+    else:
+        out, ref, got = "y", float_attention(blk.attn, xq * s["x"]["scale"]), attention.attention_int(img, xq)
+    err = np.abs(got[out] * s[out]["scale"] - ref[out]).max(axis=(1, 2)) / s[out]["scale"]
+    return err, {k: float(np.abs(v).max()) / s[k]["scale"] for k, v in ref.items() if k != "x"}
+
+
 def check(nanogpt_dir, block, a, b):
     fn, out, tol_lsb = BLOCKS[block]
     img, cases, worst, files = fixture_bytes(nanogpt_dir, a, block)
@@ -271,9 +290,14 @@ def check(nanogpt_dir, block, a, b):
         err = attention.row_sum_error(img.read("exp_lut"), int(img.read("one")[0]), T)
         assert err <= 1, f"softmax rows sum to one within {err} LSB, not 1"
     assert worst <= tol_lsb, f"{block}: max error {worst:.3f} LSB exceeds TOL {tol_lsb}"
+    err, peak = heldout(nanogpt_dir, block, img)
+    assert max(peak.values()) <= 127.5, f"{block}: activations saturate on held-out inputs: {peak}"
+    over = int((err > tol_lsb).sum())
+    assert block not in HELDOUT_TOL or not over, f"{block}: {over} of {HELDOUT_N} held-out inputs exceed TOL, max {err.max():.3f} LSB"
     print(f"ok {block}: deterministic, {len(img.words)}/{1 << 12} words, bounds {bounds}, "
           f"{len(cases)} inputs within TOL, max error {worst:.3f} LSB <= {tol_lsb} LSB "
-          f"= {tol_lsb * img.segments[out]['scale']:.6f}")
+          f"= {tol_lsb * img.segments[out]['scale']:.6f}; {HELDOUT_N} held-out: max error {err.max():.3f} LSB, "
+          f"{over} over TOL, peak activation {max(peak.values()):.1f} LSB")
 
 
 def main(argv=None):

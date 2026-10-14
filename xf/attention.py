@@ -82,7 +82,7 @@ def attention_int(img, x):
         return golden.requant(acc, _c(img, f"{out}_M"), _c(img, f"{out}_s"))
 
     o = {p: rq(golden.matmul_i8(x, img.read(f"w_{p}")), p) for p in PROJ}
-    o["kT"] = o["k"].T
+    o["kT"] = np.swapaxes(o["k"], -1, -2)
     o["scores"] = rq(golden.matmul_i8(o["q"], o["kT"]), "scores")
     o["p"] = golden.softmax_lut(o["scores"], img.read("exp_lut"), _c(img, "one"))
     o["o"] = rq(golden.matmul_i8(o["p"], o["v"]), "o")

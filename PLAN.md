@@ -23,7 +23,7 @@ thread and go back to the user.
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | SG7 benchmarks | DONE | [#9](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/9) |
 | SG8 | Stretch: single attention head (M6)    | SG6             | Attention head (SG8) | DONE | [#10](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/10) |
 | SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | —              | TODO    | —  |
-| SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | —              | TODO    | —  |
+| SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | SG10 calibration headroom | DONE | [#PR](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/PR) |
 | SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | SG11 cache tests | DONE | [#16](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/16) |
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
@@ -173,12 +173,20 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    (float) are keyed by output segment.
 8. **Tolerance** — `|dequant(sim) - torch| ≤ TOL` per element, TOL set in
    SG3 from measured quantization error and recorded here.
-   MLP block: **TOL = 2 output LSB** (`2 * scale(out)` = 0.071911, the
-   fixture `tol`). Measured max error 1.375 LSB over 200 seeded inputs and
-   1.76 LSB over 2000; errors are input-quantization-free (the float
-   reference runs on `dequant(x_q)`). SG8 measures and records its own.
-   Attention head: **TOL = 3 output LSB** (`3 * scale(y)` = 0.044518).
-   Measured max error 2.100 LSB over 2000 seeded inputs (2.11 over 5000).
+   Every non-input activation scale is max-abs times `HEADROOM` = 1.5
+   (SG10), so no activation saturates on the 200k held-out inputs
+   `rng(12345)` (peak 93.4 LSB MLP, 97.3 LSB attention); `export --check`
+   measures them. Errors are input-quantization-free (the float reference
+   runs on `dequant(x_q)`).
+   MLP block: **TOL = 2 output LSB** (`2 * scale(out)` = 0.107867, the
+   fixture `tol`). Measured max error 1.125 LSB over 200 seeded inputs;
+   4.839 LSB on the held-out set, 12 of 200k over TOL, all unsaturated
+   AUDIT-1 H1 rows, so the held-out TOL assertion waits on SG9
+   (`export.HELDOUT_TOL`).
+   Attention head: **TOL = 3 output LSB** (`3 * scale(y)` = 0.066776).
+   Measured max error 2.107 LSB over 2000 seeded inputs and 2.751 LSB
+   over the 200k held-out inputs, asserted by `export --check`. Over 1M
+   held-out inputs one unsaturated input reaches 3.614 LSB (AUDIT-2 M3).
    Its scales are calibrated on 2^16 inputs: with the MLP's 4096, `k` and
    `v` saturate on held-out inputs and the worst error reaches 16.6 LSB.
 
@@ -339,7 +347,8 @@ by an even power of two before indexing, no ISA change); kernel bit-exact vs the
 the SG5 rmsnorm cases and the SG6 chain; MLP block within TOL of nanoGPT on
 `rng(7).standard_normal((2000, 4, 8))` scaled by 1.0, 0.5, 0.3 and 0.1; the three
 `xf/tests/test_audit1.py` xfail markers removed and passing; fixtures regenerated and TOL
-re-measured in contract 8.
+re-measured in contract 8; since SG10 is done, also remove `test_mlp_tol_on_heldout`'s marker
+and add `"mlp_block"` to `export.HELDOUT_TOL`.
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_rmsnorm && make test_xf_mlp_block`
 
 ### SG10 — AUDIT-2 H1: calibration headroom
@@ -356,6 +365,10 @@ measured maxima recorded in contract 8; fixtures regenerated, all xf cocotb test
 `test_attention_tol_on_heldout` xfail marker removed and passing. `test_mlp_tol_on_heldout` also
 needs SG9: whichever of SG9/SG10 lands second removes its marker. SG9 and SG10 both regenerate
 the fixtures and edit `xf/export.py`, so they do not run concurrently.
+Done: `HEADROOM` = 1.5 removes all held-out saturation and attention is within TOL on 200k
+(contract 8). Open: the MLP held-out TOL still fails on unsaturated AUDIT-1 H1 rows (12 of 200k,
+4.84 LSB), so SG9 removes the `test_mlp_tol_on_heldout` marker and adds `"mlp_block"` to
+`export.HELDOUT_TOL`. `attention_int` now also takes a batch of inputs.
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_mlp_block && make test_xf_attention`
 
 ### SG11 — AUDIT-3 H1: L1-D cache tests

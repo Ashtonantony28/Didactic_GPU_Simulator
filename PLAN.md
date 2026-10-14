@@ -17,7 +17,7 @@ thread and go back to the user.
 | SG1 | Shared interfaces                      | SG0             | Shared interfaces (SG1) | DONE | [#3](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/3) |
 | SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | SG2 wide datapath and ISA | DONE | [#4](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/4) |
 | SG3 | Quantization + export (M1)             | SG1             | SG3 | DONE | [#5](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/5) |
-| SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | —              | TODO | — |
+| SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | Int8 matmul kernels (SG4) | DONE | [#6](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/6) |
 | SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | —              | TODO | — |
 | SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | —              | TODO | — |
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | —              | TODO | — |
@@ -242,6 +242,14 @@ Accept: bit-exact vs `golden.matmul_i8` for shapes 4×8×16, 4×16×8,
 seeds; passes under default, `COALESCE=1`, `ICACHE_LINES=16`,
 `PIPELINED=1`, `DCACHE_LINES=16`.
 Verify: `make test_xf_matmul && make test_xf_matmul PARAMS="-Pgpu.COALESCE=1 -Pgpu.PIPELINED=1"`
+
+Kernel calling convention (SG4, for SG5+): a kernel reads its operands from
+an i32 args segment. Its words 0 and 4 are `CONST` immediates of the ARGS
+prologue (base = hi*256 + lo), which `xf/kernels.py::program(name, base)`
+patches; `kernels.matmul(img, kind, a, b, c, mq=0, s=0)` allocates
+`<c>.args` = `[a, b, c, M, K, N, mq, s, rnd]` and returns `(program, threads)`.
+`mq = 0` stores int32 accumulators. `matmul_tiled` needs blockDim 4 and
+`N % 4 == 0`.
 
 ### SG5 — Elementwise + RMSNorm kernels (M3)
 Requant/clamp, ReLU, SwiGLU (SiLU LUT ⊙ up, requant), residual add with

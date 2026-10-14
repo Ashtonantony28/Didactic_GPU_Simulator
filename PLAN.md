@@ -22,6 +22,7 @@ thread and go back to the user.
 | SG6 | MLP block end-to-end (M4)              | SG3, SG4, SG5   | MLP block end-to-end (SG6) | DONE | [#8](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/8) |
 | SG7 | Benchmarks (M5)                        | SG4, SG6        | SG7 benchmarks | DONE | [#9](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/9) |
 | SG8 | Stretch: single attention head (M6)    | SG6             | Attention head (SG8) | DONE | [#10](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/10) |
+| SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | —              | TODO    | —  |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -321,6 +322,21 @@ out, one)`. Row sums: `attention.row_sum_error(lut, one, T)` enumerates all
 256^(n-1) rows of each length n ≤ T (≈1 s); `export --check` and
 `xf/tests/test_attention.py` require ≤ 1 for the exported LUT, and
 `test_xf_attention` asserts it on every simulated p. No ISA changes.
+
+### SG9 — AUDIT-1 H1: scale-invariant integer RMSNorm
+The bucketed rsqrt LUT (`Σx² >> 7`, bucket midpoints) mis-normalizes rows with small Σx²
+(bucket 0 is wrong by up to 95 h LSB), so the MLP block exceeds TOL against nanoGPT on
+in-distribution inputs (7.77 LSB, seed 7) and on most quiet inputs. See AUDIT-1.md H1.
+Changes contract 4 (`rmsnorm_int` lookup) and the rmsnorm args, so per Rules it goes to the
+user before the build starts.
+
+Accept: rsqrt lookup with bounded relative error for every Σx² in [1, d·128²] (e.g. normalize Σx²
+by an even power of two before indexing, no ISA change); kernel bit-exact vs the new golden on
+the SG5 rmsnorm cases and the SG6 chain; MLP block within TOL of nanoGPT on
+`rng(7).standard_normal((2000, 4, 8))` scaled by 1.0, 0.5, 0.3 and 0.1; the three
+`xf/tests/test_audit1.py` xfail markers removed and passing; fixtures regenerated and TOL
+re-measured in contract 8.
+Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_rmsnorm && make test_xf_mlp_block`
 
 ## Audit
 

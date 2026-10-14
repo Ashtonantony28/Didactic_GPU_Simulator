@@ -1,4 +1,4 @@
-"""AUDIT-2 repros: TOL on 200k held-out inputs. The MLP test is a strict xfail until SG9 lands."""
+"""AUDIT-2 repros: TOL on 200k held-out inputs."""
 import os
 
 import numpy as np
@@ -27,7 +27,6 @@ def _heldout(img):
     return export.quantize(x, _scale(img, "x"))
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-1 H1 rsqrt buckets (SG9); the AUDIT-2 H1 saturation tail is fixed by SG10")
 def test_mlp_tol_on_heldout():
     blk, img = _nanogpt(), MLP["image"]
     xq = _heldout(img)

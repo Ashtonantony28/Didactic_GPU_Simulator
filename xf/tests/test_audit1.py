@@ -1,4 +1,4 @@
-"""AUDIT-1 repros: expected failures until the finding's sub-goal lands (strict, so a fix flips them)."""
+"""AUDIT-1 repros, fixed by SG9."""
 import os
 
 import numpy as np
@@ -19,7 +19,6 @@ def rmsnorm_ref(x):
     return xf / np.sqrt((xf ** 2).mean(-1, keepdims=True) + export.EPS) * IMG.read("norm_w") * sw / sh
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-1 H1: bucketed rsqrt LUT is not scale-invariant on quiet rows (SG9)")
 @pytest.mark.parametrize("x", [QUIET, [[1] + [0] * 7, [2] + [0] * 7, [4] + [0] * 7, [6, -6, 6, -6, 6, -6, 6, -6]]],
                          ids=["quiet_token", "single_element"])
 def test_rmsnorm_matches_reference_on_quiet_rows(x):
@@ -27,15 +26,20 @@ def test_rmsnorm_matches_reference_on_quiet_rows(x):
     assert np.abs(h - np.clip(rmsnorm_ref(x), -128, 127)).max() <= 2
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-1 H1: MLP block exceeds TOL on in-distribution inputs (SG9)")
-def test_mlp_block_within_tol_on_fresh_seed():
+@pytest.fixture(scope="module")
+def nanogpt():
     pytest.importorskip("torch")
     if not os.environ.get("NANOGPT_DIR"):
         pytest.skip("NANOGPT_DIR not set")
     img, _, _ = export.export(os.environ["NANOGPT_DIR"])
-    blk = export.build_block(os.environ["NANOGPT_DIR"])
+    return img, export.build_block(os.environ["NANOGPT_DIR"])
+
+
+@pytest.mark.parametrize("a", [1.0, 0.5, 0.3, 0.1])
+def test_mlp_block_within_tol_on_fresh_seed(nanogpt, a):
+    img, blk = nanogpt
     sx, so = img.segments["x"]["scale"], img.segments["out"]["scale"]
-    xq = export.quantize(np.random.default_rng(7).standard_normal((2000, export.T, export.N_EMBD)), sx)
+    xq = export.quantize(np.random.default_rng(7).standard_normal((2000, export.T, export.N_EMBD)) * a, sx)
     ref = export.float_acts(blk, xq * sx)["out"]
-    worst = max(np.abs(export.mlp_block_int(img, x)["out"] * so - r).max() / so for x, r in zip(xq, ref))
+    worst = np.abs(export.mlp_block_int(img, xq)["out"] * so - ref).max() / so
     assert worst <= export.TOL_LSB, f"max error {worst:.2f} LSB"

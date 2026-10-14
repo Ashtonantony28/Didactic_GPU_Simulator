@@ -148,9 +148,10 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    - `relu(x)`; `residual_add(a, b, Ma, Mb, s)` = `requant(a*Ma + b*Mb, 1, s)`.
    - `swiglu_lut(gate, up, silu_lut, M, s)` = `requant(silu_lut[gate+128] * up, M, s)`,
      256 int8 entries.
-   - `rmsnorm_int(x, w, rsqrt_lut, lut_shift, M, s)`: per row
-     `r = rsqrt_lut[min(Σx² >> lut_shift, len-1)]`,
-     `out = requant(x*w*r, M, s)`; `1/d` and eps are folded into the LUT.
+   - `rmsnorm_int(x, w, rsqrt_lut, M, s)` (SG9): per row `ss = Σx²`, `k` the
+     least `k ≥ 0` with `ss >> 2k < len`, `r = rsqrt_lut[ss >> 2k]`,
+     `out = requant(x*w*r, M, s + k)`; the LUT holds rsqrt of its exact index
+     with `1/d` and eps folded in (`golden.rsqrt_index`).
    - `softmax_lut(scores, exp_lut, one, causal=True)`: `d = s - rowmax`
      over unmasked j (`j ≤ i`), `e = exp_lut[d+255]` (256 non-negative
      int32), `p = (e*one + S//2) // S`, masked `p = 0`. Rows sum to `one`
@@ -179,10 +180,10 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    measures them. Errors are input-quantization-free (the float reference
    runs on `dequant(x_q)`).
    MLP block: **TOL = 2 output LSB** (`2 * scale(out)` = 0.107867, the
-   fixture `tol`). Measured max error 1.125 LSB over 200 seeded inputs;
-   4.839 LSB on the held-out set, 12 of 200k over TOL, all unsaturated
-   AUDIT-1 H1 rows, so the held-out TOL assertion waits on SG9
-   (`export.HELDOUT_TOL`).
+   fixture `tol`). Measured max error (SG9) 1.060 LSB over 200 seeded inputs
+   and 1.418 LSB over the 200k held-out inputs, both asserted by
+   `export --check`; 1.20, 1.20, 1.22, 1.14 LSB on
+   `rng(7).standard_normal((2000, 4, 8))` scaled by 1.0, 0.5, 0.3, 0.1.
    Attention head: **TOL = 3 output LSB** (`3 * scale(y)` = 0.066776).
    Measured max error 2.107 LSB over 2000 seeded inputs and 2.751 LSB
    over the 200k held-out inputs, asserted by `export --check`. Over 1M
@@ -191,12 +192,12 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    `v` saturate on held-out inputs and the worst error reaches 16.6 LSB.
 
 `xf/export.py` (SG3) layout of `test/fixtures/xf/mlp_block_<0-3>.json`:
-segments in allocation order `x, norm_w, rsqrt_lut[1024], norm_shift,
+segments in allocation order `x, norm_w, rsqrt_lut[1024],
 norm_M, norm_s, h, w_gate, gate_M, gate_s, gate, w_up, up_M, up_s, up,
 silu_lut, act_M, act_s, act, w_down, down_M, down_s, down, res_Ma, res_Mb,
-res_s, out` (2006 words). Weights are `[in, out]` (`x @ W`); `[1]` i32
+res_s, out` (2005 words). Weights are `[in, out]` (`x @ W`); `[1]` i32
 segments hold requant constants; `norm_M` is 1 with all rsqrt/eps/1/d/scale
-factors folded into `rsqrt_lut`. `golden` holds `h, gate, up, act, down,
+factors folded into `rsqrt_lut`, whose entry 0 (only met by `x = 0`) is 0. `golden` holds `h, gate, up, act, down,
 out`; `reference` holds `out`. `export.mlp_block_int(image, x)` is the
 golden chain on those segments, and every (M, s) is chosen against the
 worst case over all int8 inputs (`export.check_bounds`).
@@ -279,7 +280,7 @@ Verify: `make test_xf_elementwise && make test_xf_rmsnorm`
 Bindings (SG5, for SG6): `xf/elementwise.py` `requant(img, x, out, m, s)`,
 `relu(img, x, out)`, `swiglu(img, gate, up, lut, out, m, s)`,
 `residual_add(img, a, b, out, ma, mb, s)`,
-`rmsnorm(img, x, w, lut, out, lut_shift, m, s)`, same convention as
+`rmsnorm(img, x, w, lut, out, m, s)`, same convention as
 `kernels.matmul`: `<out>.args` allocated, `(program, threads)` returned, one
 thread per output element (≤ 255). Kernels `kernels/{requant,relu,swiglu,
 residual_add,rmsnorm}.asm`; `rmsnorm` has each thread sum its own row.
@@ -311,7 +312,7 @@ Bench (SG7): `--xf --label xf-<b>` runs `test/test_xf_bench.py::bench_<b>`
 (`matmul`: SG4 shapes; `mlp`: fixture 0, all six launches) for both matmul kinds
 under default, `COALESCE=1`, `DCACHE_LINES=16` and both, writes `bench/xf-<b>.json`
 and regenerates `docs/xf-bench.md`. Tiled wins wherever M fills the 4-row tile
-(MLP block 44263 vs 60721 cycles) and loses at M = 1 (1×8×8: 4282 vs 1771).
+(MLP block 46619 vs 63077 cycles since SG9) and loses at M = 1 (1×8×8: 4282 vs 1771).
 
 ### SG8 — Stretch: single attention head (M6)
 QKᵀ (matmul kernel reuse), scale, causal mask, fixed-point softmax

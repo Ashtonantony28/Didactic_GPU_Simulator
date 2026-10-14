@@ -24,8 +24,8 @@ def test_args():
     assert ew.swiglu(img, "a", "b", "lut", "out", 7, 3)[1] == 32
     assert img.read("out.args").tolist() == [0, 32, 96, 64, 7, 3, 4]
     img = _img()
-    ew.rmsnorm(img, "a", "w", "rlut", "out", 7, 1, 0)
-    assert img.read("out.args").tolist() == [0, 352, 360, 64, 8, 7, 1023, 1, 0, 0]
+    ew.rmsnorm(img, "a", "w", "rlut", "out", 3, 9)
+    assert img.read("out.args").tolist() == [0, 352, 360, 64, 8, 4, 1023, 3, 9, 1 << 9]
     img = _img()
     ew.residual_add(img, "a", "b", "out", 5, 6, 31)
     assert img.read("out.args").tolist()[-2:] == [31, 1 << 30]
@@ -45,8 +45,9 @@ def test_args():
     lambda img: ew.relu(img, "lut", "out"),
     lambda img: ew.swiglu(img, "a", "b", "w", "out", 1, 0),
     lambda img: ew.residual_add(img, "a", "w", "out", 1, 1, 0),
-    lambda img: ew.rmsnorm(img, "a", "lut", "rlut", "out", 7, 1, 0),
-    lambda img: ew.rmsnorm(img, "a", "w", "rlut", "out", 32, 1, 0),
+    lambda img: ew.rmsnorm(img, "a", "lut", "rlut", "out", 1, 0),
+    lambda img: ew.rmsnorm(img, "a", "w", "rlut", "out", 1, 27),
+    lambda img: ew.rmsnorm(img, "a", "w", "lut", "out", 1, -1),
     lambda img: ew.relu(img, "rlut", "rlut"),
     lambda img: ew.transpose(img, "a", "out"),
     lambda img: ew.softmax(img, "a", "lut", "out", 127),

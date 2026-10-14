@@ -63,16 +63,29 @@ def residual_add(a, b, ma, mb, s):
     return requant(_i32(_i32(a * int(ma), "a*Ma") + _i32(b * int(mb), "b*Mb"), "a*Ma + b*Mb"), 1, s)
 
 
-def rmsnorm_int(x, w, rsqrt_lut, lut_shift, m, s):
-    """Per row of x (T,d): r = rsqrt_lut[min(sum(x^2) >> lut_shift, len-1)],
-    out = requant(x * w * r, m, s). eps and 1/d are folded into the LUT."""
+def rsqrt_index(ss, n):
+    """Least k >= 0 with ss >> 2k < n, and idx = ss >> 2k: ss = idx * 4^k up to truncation, idx >= n//4 when k > 0."""
+    idx, k = np.array(ss, dtype=np.int64), np.zeros(np.shape(ss), dtype=np.int64)
+    while (big := idx >= n).any():
+        idx[big] >>= 2
+        k[big] += 1
+    return idx, k
+
+
+def rmsnorm_int(x, w, rsqrt_lut, m, s):
+    """Per row of x (T,d): idx, k = rsqrt_index(sum(x^2), len), r = rsqrt_lut[idx],
+    out = requant(x * w * r, m, s + k). rsqrt(4^k idx) = rsqrt(idx) / 2^k, so the LUT holds rsqrt of
+    its exact index with eps and 1/d folded in, and the 2^-k goes into the requant shift."""
     x, w = _i8(x, "x"), _i8(w, "w")
     lut = _i32(rsqrt_lut, "rsqrt_lut")
     if lut.ndim != 1 or lut.min() < 0:
         raise ValueError("rsqrt_lut must be a non-negative 1-D table")
-    ss = _i32((x * x).sum(axis=-1, keepdims=True), "sum of squares")
-    r = lut[np.minimum(ss >> lut_shift, len(lut) - 1)]
-    return requant(_i32(_i32(x * w, "x*w") * r, "x*w*r"), m, s)
+    idx, k = rsqrt_index(_i32((x * x).sum(axis=-1), "sum of squares"), len(lut))
+    xwr = _i32(_i32(x * w, "x*w") * lut[idx][..., None], "x*w*r")
+    out = np.empty_like(xwr)
+    for kv in np.unique(k):
+        out[k == kv] = requant(xwr[k == kv], m, s + int(kv))
+    return out
 
 
 def softmax_lut(scores, exp_lut, one, causal=True):

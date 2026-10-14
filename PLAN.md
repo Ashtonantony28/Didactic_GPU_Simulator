@@ -24,6 +24,8 @@ thread and go back to the user.
 | SG8 | Stretch: single attention head (M6)    | SG6             | Attention head (SG8) | DONE | [#10](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/10) |
 | SG9 | AUDIT-1 H1: scale-invariant RMSNorm    | SG3, SG5, SG6   | —              | TODO    | —  |
 | SG10 | AUDIT-2 H1: calibration headroom     | SG3, SG8        | —              | TODO    | —  |
+| SG11 | AUDIT-3 H1: L1-D cache tests         | SG12            | —              | TODO    | —  |
+| SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | —              | TODO    | —  |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -354,6 +356,32 @@ measured maxima recorded in contract 8; fixtures regenerated, all xf cocotb test
 needs SG9: whichever of SG9/SG10 lands second removes its marker. SG9 and SG10 both regenerate
 the fixtures and edit `xf/export.py`, so they do not run concurrently.
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_mlp_block && make test_xf_attention`
+
+### SG11 — AUDIT-3 H1: L1-D cache tests
+`test_l1d_indepth` accepts any hit/miss counts and builds without the cache by default; a cache that
+returns stale data after a write hit, or never hits, passes every target. See AUDIT-3.md H1. Test-only:
+no RTL change expected (a directed read-after-write test passes at HEAD).
+
+Accept: directed tests for read-after-write by the same thread and for a write by one block read by a
+later block, at WORD_BITS 8 and 32; exact hit/miss counts for the hot-address case with and without
+MEDIC; `test_l1d_indepth` run under DCACHE_LINES=16 (with and without MEDIC) by the SG12 matrix target.
+Both AUDIT-3 H1 mutants (write hit leaves the line stale; a fill never sets `valid`) make the new tests
+fail, and the unmutated RTL passes.
+Verify: `make test_l1d_indepth PARAMS=-Pgpu.DCACHE_LINES=16 && make test_l1d_indepth PARAMS="-Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC=1"`, then each AUDIT-3 H1 `sed` mutant makes the first command fail.
+
+### SG12 — AUDIT-3 H2: configuration matrix and full-suite targets
+No make target runs the whole suite or any parameter-gated RTL; an I-cache that hangs every kernel
+passes every documented command, and `make test_xf_rmsnorm PARAMS=-Pgpu.NUM_CORES=1` fails today on the
+20,000-cycle launch timeout. See AUDIT-3.md H2.
+
+Accept: a make target that runs every test module once at default parameters (plus
+`harness_selftest`), and one that runs `regression`, `regression_xf` and every `test_xf_*` under
+default; ICACHE_LINES=16; PIPELINED=1; COALESCE=1; DCACHE_LINES=16; DCACHE_LINES=16 MEDIC=1; all five;
+NUM_CORES=1; NUM_CORES=4, plus a run with non-zero `mem_latency`, each configuration in its own build
+directory so they can run in parallel; both exit non-zero on any failure; the elementwise/RMSNorm
+launch timeout raised so NUM_CORES=1 passes; the AUDIT-3 H2 I-cache mutant fails the matrix target;
+the Dispatch protocol's "full existing suite" names the new targets.
+Verify: the new full-suite and matrix targets pass from a clean checkout, and the AUDIT-3 H2 `sed` mutant makes the matrix target fail.
 
 ## Audit
 

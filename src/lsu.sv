@@ -5,7 +5,10 @@
 // One per thread. Async global memory request → wait → done handshake.
 // Also handles per-block shared-memory access (Phase 7) via a separate port.
 // At decode time at most one of {global, shared} is enabled — they share the FSM.
-module lsu (
+module lsu #(
+    parameter WORD_BITS = 8,
+    parameter ADDR_BITS = 8
+) (
     input  wire        clk,
     input  wire        reset,
     input  wire        enable,
@@ -14,29 +17,29 @@ module lsu (
     input  wire        decoded_mem_write_enable,
     input  wire        decoded_smem_read_enable,
     input  wire        decoded_smem_write_enable,
-    input  wire [7:0]  rs,
-    input  wire [7:0]  rt,
+    input  wire [WORD_BITS-1:0] rs,
+    input  wire [WORD_BITS-1:0] rt,
 
     // Global memory
     output reg         mem_read_valid,
-    output reg  [7:0]  mem_read_address,
+    output reg  [ADDR_BITS-1:0] mem_read_address,
     input  wire        mem_read_ready,
-    input  wire [7:0]  mem_read_data,
+    input  wire [WORD_BITS-1:0] mem_read_data,
     output reg         mem_write_valid,
-    output reg  [7:0]  mem_write_address,
-    output reg  [7:0]  mem_write_data,
+    output reg  [ADDR_BITS-1:0] mem_write_address,
+    output reg  [WORD_BITS-1:0] mem_write_data,
     input  wire        mem_write_ready,
 
     // Shared memory (single-cycle)
     output reg         smem_read_enable,
     output reg  [7:0]  smem_read_address,
-    input  wire [7:0]  smem_read_data,
+    input  wire [WORD_BITS-1:0] smem_read_data,
     output reg         smem_write_enable,
     output reg  [7:0]  smem_write_address,
-    output reg  [7:0]  smem_write_data,
+    output reg  [WORD_BITS-1:0] smem_write_data,
 
     output reg  [1:0]  lsu_state,
-    output reg  [7:0]  lsu_out
+    output reg  [WORD_BITS-1:0] lsu_out
 );
     localparam [1:0] IDLE = 2'b00, REQUESTING = 2'b01, WAITING = 2'b10, DONE = 2'b11;
     localparam [2:0] CORE_REQUEST = 3'b011, CORE_UPDATE = 3'b110;
@@ -62,7 +65,7 @@ module lsu (
                     IDLE:       if (core_state == CORE_REQUEST) lsu_state <= REQUESTING;
                     REQUESTING: begin
                         mem_read_valid   <= 1;
-                        mem_read_address <= rs;
+                        mem_read_address <= rs[ADDR_BITS-1:0];
                         lsu_state        <= WAITING;
                     end
                     WAITING: if (mem_read_ready) begin
@@ -79,7 +82,7 @@ module lsu (
                     IDLE:       if (core_state == CORE_REQUEST) lsu_state <= REQUESTING;
                     REQUESTING: begin
                         mem_write_valid   <= 1;
-                        mem_write_address <= rs;
+                        mem_write_address <= rs[ADDR_BITS-1:0];
                         mem_write_data    <= rt;
                         lsu_state         <= WAITING;
                     end
@@ -98,7 +101,7 @@ module lsu (
                     IDLE: if (core_state == CORE_REQUEST) lsu_state <= REQUESTING;
                     REQUESTING: begin
                         smem_read_enable  <= 1;
-                        smem_read_address <= rs;
+                        smem_read_address <= rs[7:0];
                         lsu_state         <= WAITING;
                     end
                     WAITING: begin
@@ -115,7 +118,7 @@ module lsu (
                     IDLE: if (core_state == CORE_REQUEST) lsu_state <= REQUESTING;
                     REQUESTING: begin
                         smem_write_enable  <= 1;
-                        smem_write_address <= rs;
+                        smem_write_address <= rs[7:0];
                         smem_write_data    <= rt;
                         lsu_state          <= WAITING;
                     end

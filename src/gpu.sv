@@ -4,7 +4,9 @@
 // GPU Top
 // Wires the dispatcher, memory controllers, and an array of cores onto external memory.
 // All Phase-3+ extensions are gated by parameters so the original Phase-1 baseline is the default.
+// WORD_BITS is the register/ALU/SMEM width and must equal DATA_MEM_DATA_BITS (ADR-010).
 module gpu #(
+    parameter WORD_BITS                 = 8,
     parameter DATA_MEM_ADDR_BITS        = 8,
     parameter DATA_MEM_DATA_BITS        = 8,
     parameter DATA_MEM_NUM_CHANNELS     = 4,
@@ -50,6 +52,8 @@ module gpu #(
     output wire [31:0]                         dcache_hits_total,
     output wire [31:0]                         dcache_misses_total
 );
+    initial if (WORD_BITS != DATA_MEM_DATA_BITS) $fatal(1, "gpu: WORD_BITS (%0d) != DATA_MEM_DATA_BITS (%0d)", WORD_BITS, DATA_MEM_DATA_BITS);
+
     wire [7:0] thread_count;
 
     wire [NUM_CORES-1:0] core_start;
@@ -274,6 +278,7 @@ module gpu #(
             core #(
                 .DATA_MEM_ADDR_BITS(DATA_MEM_ADDR_BITS),
                 .DATA_MEM_DATA_BITS(DATA_MEM_DATA_BITS),
+                .WORD_BITS(WORD_BITS),
                 .PROGRAM_MEM_ADDR_BITS(PROGRAM_MEM_ADDR_BITS),
                 .PROGRAM_MEM_DATA_BITS(PROGRAM_MEM_DATA_BITS),
                 .THREADS_PER_BLOCK(THREADS_PER_BLOCK),

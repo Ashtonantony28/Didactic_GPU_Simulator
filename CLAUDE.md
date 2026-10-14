@@ -78,6 +78,7 @@ default. Pass them via `iverilog -Pgpu.NAME=VALUE`:
 | `DCACHE_LINES`  | 9     | `0`     | L1-D cache (per-gpu, shared lines, write-through) |
 | `MEDIC`         | 9     | `0`     | MeDiC bypass + priority on top of L1-D          |
 | `NUM_CORES`     | —     | `2`     | Number of compute cores                         |
+| `WORD_BITS`     | xf    | `8`     | Register/ALU/SMEM width; must equal `DATA_MEM_DATA_BITS` (ADR-010) |
 | `THREADS_PER_BLOCK` | — | `4`     | Threads per block (lockstep within a core)      |
 
 The warp scheduler (Phase 8) is built as a separate compilation target:

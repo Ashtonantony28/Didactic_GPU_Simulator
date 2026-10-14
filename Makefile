@@ -1,5 +1,5 @@
 # tiny-gpu-extended Makefile
-.PHONY: gpu_v compile compile_xf test_% test_xf_% clean bench bench_clean harness_selftest
+.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf clean bench bench_clean harness_selftest
 
 SRC := $(wildcard src/*.sv)
 
@@ -62,6 +62,13 @@ regression: compile
 	@for t in matadd matmul vector_dot relu conv1d transpose divergent_relu tiled_matmul; do \
 	  echo "=== $$t ==="; \
 	  $(call cocotb,test.test_$$t,build/sim.vvp) || exit 1; \
+	done
+
+# The kernel regression at the xf widths (WORD_BITS=32, 4096-word data memory).
+regression_xf: compile_xf
+	@for t in matadd matmul vector_dot relu conv1d transpose divergent_relu tiled_matmul; do \
+	  echo "=== $$t (xf) ==="; \
+	  $(call cocotb,test.test_$$t,build/sim_xf.vvp) || exit 1; \
 	done
 
 # A failing test, a module with no tests and a missing module must each fail the target.

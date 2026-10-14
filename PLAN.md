@@ -15,7 +15,7 @@ thread and go back to the user.
 |-----|----------------------------------------|-----------------|----------------|---------|----|
 | SG0 | Harness hygiene                        | —               | Harness hygiene (SG0) | DONE | [#2](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/2) |
 | SG1 | Shared interfaces                      | SG0             | Shared interfaces (SG1) | DONE | [#3](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/3) |
-| SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | —              | TODO | — |
+| SG2 | Wide datapath + signed ISA ops (RTL)   | SG1             | SG2 wide datapath and ISA | DONE | [#4](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/4) |
 | SG3 | Quantization + export (M1)             | SG1             | —              | TODO | — |
 | SG4 | Int8 matmul kernels, naive + tiled (M2)| SG2             | —              | TODO | — |
 | SG5 | Elementwise + RMSNorm kernels (M3)     | SG2             | —              | TODO | — |

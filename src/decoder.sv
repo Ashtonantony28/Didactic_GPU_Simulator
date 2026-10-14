@@ -22,7 +22,7 @@ module decoder (
     output reg         decoded_mem_write_enable,
     output reg         decoded_nzp_write_enable,
     output reg  [1:0]  decoded_reg_input_mux,
-    output reg  [1:0]  decoded_alu_arithmetic_mux,
+    output reg  [2:0]  decoded_alu_arithmetic_mux,
     output reg         decoded_alu_output_mux,
     output reg         decoded_pc_mux,
     output reg         decoded_ret,
@@ -44,6 +44,8 @@ module decoder (
         OP_LDS   = 4'b1010,
         OP_STS   = 4'b1011,
         OP_BAR   = 4'b1100,
+        OP_SRA   = 4'b1101,
+        OP_MAX   = 4'b1110,
         OP_RET   = 4'b1111;
 
     always @(*) begin
@@ -58,7 +60,7 @@ module decoder (
         decoded_mem_write_enable   = 1'b0;
         decoded_nzp_write_enable   = 1'b0;
         decoded_reg_input_mux      = 2'b00;
-        decoded_alu_arithmetic_mux = 2'b00;
+        decoded_alu_arithmetic_mux = 3'b000;
         decoded_alu_output_mux     = 1'b0;
         decoded_pc_mux             = 1'b0;
         decoded_ret                = 1'b0;
@@ -75,19 +77,27 @@ module decoder (
             end
             OP_ADD: begin
                 decoded_reg_write_enable   = 1'b1;
-                decoded_alu_arithmetic_mux = 2'b00;
+                decoded_alu_arithmetic_mux = 3'b000;
             end
             OP_SUB: begin
                 decoded_reg_write_enable   = 1'b1;
-                decoded_alu_arithmetic_mux = 2'b01;
+                decoded_alu_arithmetic_mux = 3'b001;
             end
             OP_MUL: begin
                 decoded_reg_write_enable   = 1'b1;
-                decoded_alu_arithmetic_mux = 2'b10;
+                decoded_alu_arithmetic_mux = 3'b010;
             end
             OP_DIV: begin
                 decoded_reg_write_enable   = 1'b1;
-                decoded_alu_arithmetic_mux = 2'b11;
+                decoded_alu_arithmetic_mux = 3'b011;
+            end
+            OP_SRA: begin
+                decoded_reg_write_enable   = 1'b1;
+                decoded_alu_arithmetic_mux = 3'b100;
+            end
+            OP_MAX: begin
+                decoded_reg_write_enable   = 1'b1;
+                decoded_alu_arithmetic_mux = 3'b101;
             end
             OP_LDR: begin
                 decoded_reg_write_enable = 1'b1;

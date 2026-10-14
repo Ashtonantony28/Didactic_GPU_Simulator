@@ -1,11 +1,15 @@
 # ISA — tiny-gpu-extended
 
-16-bit fixed-width instructions. 14 opcodes. Compatible with upstream
+16-bit fixed-width instructions. 16 opcodes. Compatible with upstream
 [adam-maj/tiny-gpu](https://github.com/adam-maj/tiny-gpu).
 
 ## Register file
 
-16 registers per thread, 8 bits each.
+16 registers per thread, `WORD_BITS` bits each (default 8; 32 for the
+transformer build, see [ADR-010](decisions/ADR-010-wide-datapath.md)). Arithmetic wraps
+modulo 2^`WORD_BITS`; `CONST` and `%blockIdx`/`%blockDim`/`%threadIdx` are
+zero-extended. `LDR`/`STR` use the low `DATA_MEM_ADDR_BITS` bits of `rs` as the
+address, `LDS`/`STS` the low 8.
 
 | Index | Mnemonic     | Notes                      |
 |-------|--------------|----------------------------|
@@ -19,7 +23,7 @@
 ```
  15  12 11  8 7   4 3   0
 +------+-----+-----+-----+
-| op   |  rd |  rs |  rt |    (3-register form: ADD, SUB, MUL, DIV)
+| op   |  rd |  rs |  rt |    (3-register form: ADD, SUB, MUL, DIV, SRA, MAX)
 +------+-----+-----+-----+
 
  15  12 11  8 7         0
@@ -47,6 +51,8 @@
 | `0111`  | LDR      | `rd ← MEM[rs]`                                                  |
 | `1000`  | STR      | `MEM[rs] ← rt`                                                  |
 | `1001`  | CONST    | `rd ← imm`                                                      |
+| `1101`  | SRA      | `rd ← rs >>> rt`  (signed `rs`, unsigned `rt`; `rt ≥ WORD_BITS` fills with the sign) |
+| `1110`  | MAX      | `rd ← max(rs, rt)`  (signed)                                    |
 | `1111`  | RET      | finish current block                                            |
 
 ## NZP semantics (compatibility note)
@@ -80,5 +86,11 @@ See [ADR-007](decisions/ADR-007-shared-memory.md) for the design.
 `xf/isa.py` is the single source for opcodes and field layout; `xf/asm.py`
 assembles `kernels/*.asm` (`python3 -m xf.asm file.asm`). Branches are
 written `BRn`, `BRzp`, `BRnzp`, … with a label or instruction index;
-immediates are `#5` or `#0x80` (0–255). `xf/isa.py` already reserves
-`1101 SRA` and `1110 MAX` (PLAN.md D2); they are not wired in `src/` yet.
+immediates are `#5` or `#0x80` (0–255).
+
+## Signed ops (ADR-010)
+
+`SRA` and `MAX` are the only signed instructions; `ADD`/`SUB`/`MUL` are
+sign-agnostic modulo 2^`WORD_BITS`, `DIV` and `CMP` stay unsigned. `SRA` is
+floor division by 2^`rt` (requantization); `MAX` gives ReLU (`MAX rd, rs, R0`
+with `R0 = 0`) and clamping, with `MIN(x, c) = -MAX(-x, -c)`.

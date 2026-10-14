@@ -433,6 +433,10 @@ inputs exceed TOL on 61 of 200k. The Gaussian held-out maximum (2.75 LSB) is not
 Any fix changes contract 4 (matmul operands), the attention layout, or contract 8's TOL, so per Rules
 it goes to the user before the build starts.
 
+Runs after SG13, which may absorb most of it: in a float emulation of SG13's `ln_1` chain the same search
+reaches 2.83 LSB. First port `test_audit6.py` to SG13's chain and re-run the AUDIT-6 hill climb; if the chain
+stays within TOL, SG14 reduces to the `export --check` addition below.
+
 Accept: either `scores` precision raised (e.g. wider `q`/`k` operands for the scores matmul, or `Wq·Wkᵀ`
 folded so one operand is exact) or the attention TOL re-derived from a worst-case error bound, recorded in
 contract 8; both `xf/tests/test_audit6.py` xfail markers removed and passing; kernels bit-exact vs the new

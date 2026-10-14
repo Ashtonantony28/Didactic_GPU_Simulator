@@ -78,6 +78,13 @@ NANOGPT_DIR=... python3 -m pytest xf/tests/test_audit6.py -rxX --runxfail
 # test_attention_tol_outlier_channel:   61 of 200000 inputs, max 4.49 LSB
 ```
 
+SG13 (AUDIT-5 H1) will put `ln_1` in front of the head and recalibrate, which bounds every row's RMS
+and should shrink this. A float emulation of that chain (nanoGPT `ln_1`, output rounded to int8,
+scales recalibrated with the same headroom on 65,536 normalized inputs, then this golden attention
+chain) stays at 2.52 LSB on the 200k held-out inputs, and the same hill climb over the raw input
+reaches only 2.83 LSB, flat from step 1000 to 2000. So SG14 runs after SG13 and starts by
+re-measuring on the new chain.
+
 Fix direction (SG14, after SG13): either give `scores` more precision than int8 `q`/`k` (for example, wider
 `q`/`k` operands for the scores matmul, or folding `Wq·Wkᵀ` so only one operand is rounded), or
 derive the attention TOL from a worst-case error bound rather than a Gaussian sample and re-record

@@ -28,6 +28,8 @@ thread and go back to the user.
 | SG12 | AUDIT-3 H2: config matrix + full-suite targets | SG0  | SG12 config matrix | DONE | [#17](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/17) |
 | SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | — | TODO | — |
 | SG14 | AUDIT-6 H1: attention scores precision | SG13 | — | TODO | — |
+| SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | — | TODO | — |
+| SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | — | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -442,6 +444,28 @@ folded so one operand is exact) or the attention TOL re-derived from a worst-cas
 contract 8; both `xf/tests/test_audit6.py` xfail markers removed and passing; kernels bit-exact vs the new
 golden; `export --check` also asserts TOL on a non-Gaussian unsaturated set (e.g. the outlier-channel inputs).
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q && make test_xf_attention`
+
+### SG15 — AUDIT-7 H1: torch-gated checks in the merge gate
+Without torch and `NANOGPT_DIR`, `make test_all` skips 13 tests, every one that checks more than the 4
+committed fixtures per block, and never runs `export --check`; a full revert of SG10 passes it. Contract 8's
+no-saturation guarantee is asserted only in `export.check`, so no headroom on `act` passes pytest even with
+torch. See AUDIT-7.md H1. Test-only.
+
+Accept: `make test_all` fails (does not skip) when torch or `NANOGPT_DIR` is missing, and runs
+`python3 -m xf.export --check`; the held-out saturation assert runs under pytest; the Dispatch protocol's
+full-suite command names `NANOGPT_DIR`; each AUDIT-7 H1 mutant (re-exported) fails `make test_all`, and HEAD passes.
+Verify: `NANOGPT_DIR=... make test_all`, `env -u NANOGPT_DIR make test_all` exits non-zero, then each H1 mutant fails the first.
+
+### SG16 — AUDIT-7 H2: per-segment gain and RMS checks
+Tolerance bounds only the per-element max error of `out` and `y`, so a SiLU LUT indexed one gate LSB off
+(`act`, `down` gain +3.4 %), `p` dequantized at 1/128 (`y` −0.9 %) and a 0.5 % residual gain pass every check,
+`export --check` included. See AUDIT-7.md H2. Adds bounds to contract 8, so per Rules it goes to the user
+before the build starts; after SG13 and SG14, which change the attention chain.
+
+Accept: `export --check` and a pytest compare every non-input golden segment of both blocks against its float
+activation on the held-out inputs, asserting least-squares gain and RMS error within bounds measured at HEAD
+and recorded in contract 8; each of the three AUDIT-7 H2 mutants (re-exported) fails both.
+Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q`, then each H2 mutant fails both.
 
 ## Audit
 

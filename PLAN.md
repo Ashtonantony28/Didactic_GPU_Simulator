@@ -24,7 +24,7 @@ thread and go back to the user.
 | SG8 | Stretch: single attention head (M6)    | SG6             | —              | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
-SG1 open issue: `softmax_lut` rows sum to `one` within T/2 LSB (2 at T=4); SG8's "1 LSB" criterion needs revisiting.
+SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
 
 Concurrency: at most two build threads at once. SG0 → SG1 → SG2 run
 alone. SG3 may start in parallel with SG2. SG4 ∥ SG5 after SG2. SG6, SG7,
@@ -172,6 +172,10 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    fixture `tol`). Measured max error 1.375 LSB over 200 seeded inputs and
    1.76 LSB over 2000; errors are input-quantization-free (the float
    reference runs on `dequant(x_q)`). SG8 measures and records its own.
+   Attention head: **TOL = 3 output LSB** (`3 * scale(y)` = 0.044518).
+   Measured max error 2.100 LSB over 2000 seeded inputs (2.11 over 5000).
+   Its scales are calibrated on 2^16 inputs: with the MLP's 4096, `k` and
+   `v` saturate on held-out inputs and the worst error reaches 16.6 LSB.
 
 `xf/export.py` (SG3) layout of `test/fixtures/xf/mlp_block_<0-3>.json`:
 segments in allocation order `x, norm_w, rsqrt_lut[1024], norm_shift,
@@ -303,6 +307,20 @@ QKᵀ (matmul kernel reuse), scale, causal mask, fixed-point softmax
 Accept: bit-exact vs `golden.softmax_lut` pipeline; within TOL of nanoGPT
 single-head causal attention; rows sum to the fixed-point one within 1 LSB.
 Verify: `make test_xf_attention`
+
+Chain (SG8): `xf/attention.py` `launches(img, kind, acts=None)` runs
+q, k, v (matmul) → `kT` (`kernels/transpose.asm`) → scores = q @ kT (matmul,
+1/√hd folded into `scores_M`) → p (`kernels/softmax.asm`, causal, one thread
+per element, each scanning its row) → o = p @ v → y = o @ `w_o` (c_proj) on
+`test/fixtures/xf/attention_<0-3>.json` (781 words); `attention_int` is the
+golden chain, `check_bounds` its int32 bounds. `one = 127` so p stays int8
+for the p @ v matmul; `exp_lut[d + 255] = round(exp(d·scale(scores))·2^23)`,
+2^23 being the largest power keeping `e·one + S/2` in int32 at T = 4.
+Bindings `elementwise.transpose(img, x, out)`, `softmax(img, scores, lut,
+out, one)`. Row sums: `attention.row_sum_error(lut, one, T)` enumerates all
+256^(n-1) rows of each length n ≤ T (≈1 s); `export --check` and
+`xf/tests/test_attention.py` require ≤ 1 for the exported LUT, and
+`test_xf_attention` asserts it on every simulated p. No ISA changes.
 
 ## Audit
 

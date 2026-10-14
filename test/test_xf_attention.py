@@ -62,7 +62,7 @@ async def test_softmax(dut):
         _seg(img, f"{name}.in", s)
         img.alloc(name, list(np.shape(s)), dtype)
         cases.append((name, ew.softmax(img, f"{name}.in", lut, name, one), golden.softmax_lut(s, img.read(lut), one)))
-        if lut == "lut_fix" and one == ONE:
+        if lut == "lut_fix" and one == ONE and len(s) <= T:   # the row-sum proof covers rows of <= T
             exported.append(name)
 
     for i in range(3):

@@ -4,7 +4,6 @@ import pytest
 from xf.asm import AsmError, assemble
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-4 L3: `BR` with no condition assembles to a never-taken branch")
 def test_br_without_condition_rejected():
     with pytest.raises(AsmError):
         assemble("top: BR top\nRET")

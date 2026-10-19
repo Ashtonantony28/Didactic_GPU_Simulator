@@ -533,7 +533,9 @@ slows any matrix configuration by > 20 % stops and reports.
 Contracts 9–12 below as code and tests, with no RTL behaviour change.
 
 9. **ISA reference model** — `xf/isasim.py`: `run(program, data, threads, *, word_bits=8, addr_bits=8,
-   threads_per_block=4, warps_per_core=1) -> Result(memory, per_block_trace)`. Lockstep blocks,
+   threads_per_block=4, warps_per_core=1, smem_size=64, simt=False, stack_depth=8, max_steps=1_000_000,
+   warp_policy="lrr") -> Result(memory, steps, divergent, stores_conflict)`; errors raise `IsaSimError`.
+   `warp_policy` is `"lrr"` or `"gto"`; missing-`BAR` races show only under `"gto"` (ADR-012). Lockstep blocks,
    per-lane NZP and active mask, SMEM per block, 8/32-bit wrap, the semantics of `docs/isa.md` plus the
    reconvergence encoding of contract 10. It flags divergent branches when the SIMT stack is off.
 10. **Reconvergence encoding** — `BR` with `nzp = 000` (never taken today; AUDIT-4 L3) becomes

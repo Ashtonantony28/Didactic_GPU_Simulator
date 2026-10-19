@@ -30,13 +30,13 @@ thread and go back to the user.
 | SG14 | AUDIT-6 H1: attention scores precision | SG13 | SG14 attention TOL bound | DONE | [#25](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/25) |
 | SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | SG15: make the merge gate run the real tolerance checks | DONE | [#24](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/24) |
 | SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | — | TODO | — |
-| SG17 | Round 3 shared interfaces: ISA model, trace fixtures, multi-warp and SYNC contracts | SG15 | — | PROPOSED | — |
-| SG18 | Controller: parallel channels, exact telemetry | SG17 | — | PROPOSED | — |
-| SG19 | MeDiC that can install and hit | SG18 | — | PROPOSED | — |
-| SG20 | Multi-warp core, warp scheduler wired, real BAR | SG17, SG18 | — | PROPOSED | — |
-| SG21 | SIMT-stack control divergence | SG20 | — | PROPOSED | — |
-| SG22 | Kernel and binder robustness (AUDIT-4, AUDIT-8) | SG17 | — | PROPOSED | — |
-| SG23 | Benchmarks under latency and multi-warp; docs refresh | SG19, SG20, SG21 | — | PROPOSED | — |
+| SG17 | Round 3 shared interfaces: ISA model, trace fixtures, multi-warp and SYNC contracts | SG15 | — | TODO | — |
+| SG18 | Controller: parallel channels, exact telemetry | SG17 | — | TODO | — |
+| SG19 | MeDiC that can install and hit | SG18 | — | TODO | — |
+| SG20 | Multi-warp core, warp scheduler wired, real BAR | SG17, SG18 | — | TODO | — |
+| SG21 | SIMT-stack control divergence | SG20 | — | TODO | — |
+| SG22 | Kernel and binder robustness (AUDIT-4, AUDIT-8) | SG17 | — | TODO | — |
+| SG23 | Benchmarks under latency and multi-warp; docs refresh | SG19, SG20, SG21 | — | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -500,7 +500,7 @@ activation on the held-out inputs, asserting least-squares gain and RMS error wi
 and recorded in contract 8; each of the three AUDIT-7 H2 mutants (re-exported) fails both.
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q`, then each H2 mutant fails both.
 
-## Round 3 — completing the GPU (proposed 2026-10-19, awaiting approval)
+## Round 3 — completing the GPU (approved by the user on 2026-10-19)
 
 Goal: every feature the README and final report claim is wired, measured and tested: parallel memory
 channels with exact counters, a MeDiC that can cache, a multi-warp core running the warp scheduler,

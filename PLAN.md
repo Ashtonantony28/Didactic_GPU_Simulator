@@ -30,6 +30,13 @@ thread and go back to the user.
 | SG14 | AUDIT-6 H1: attention scores precision | SG13 | SG14 attention TOL bound | DONE | [#25](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/25) |
 | SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | SG15: make the merge gate run the real tolerance checks | DONE | [#24](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/24) |
 | SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | — | TODO | — |
+| SG17 | Round 3 shared interfaces: ISA model, trace fixtures, multi-warp and SYNC contracts | SG15 | — | PROPOSED | — |
+| SG18 | Controller: parallel channels, exact telemetry | SG17 | — | PROPOSED | — |
+| SG19 | MeDiC that can install and hit | SG18 | — | PROPOSED | — |
+| SG20 | Multi-warp core, warp scheduler wired, real BAR | SG17, SG18 | — | PROPOSED | — |
+| SG21 | SIMT-stack control divergence | SG20 | — | PROPOSED | — |
+| SG22 | Kernel and binder robustness (AUDIT-4, AUDIT-8) | SG17 | — | PROPOSED | — |
+| SG23 | Benchmarks under latency and multi-warp; docs refresh | SG19, SG20, SG21 | — | PROPOSED | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -492,6 +499,125 @@ Accept: `export --check` and a pytest compare every non-input golden segment of 
 activation on the held-out inputs, asserting least-squares gain and RMS error within bounds measured at HEAD
 and recorded in contract 8; each of the three AUDIT-7 H2 mutants (re-exported) fails both.
 Verify: `NANOGPT_DIR=... python3 -m xf.export --check && NANOGPT_DIR=... python3 -m pytest xf/tests -q`, then each H2 mutant fails both.
+
+## Round 3 — completing the GPU (proposed 2026-10-19, awaiting approval)
+
+Goal: every feature the README and final report claim is wired, measured and tested: parallel memory
+channels with exact counters, a MeDiC that can cache, a multi-warp core running the warp scheduler,
+real `BAR`, and SIMT-stack divergence. The xf track only gets SG16 and the robustness items.
+
+Facts checked at `2adb710` (iverilog 12.0, sv2v 0.0.13, cocotb 2.0.1):
+- **Controller race.** `controller.sv` claims a consumer with `channel_serving_consumer[j] <= 1`; later
+  channels in the same loop iteration do not see it, so every idle channel takes the same consumer.
+  Probe (8 threads, each `LDR` a distinct address): at most 1 distinct address on the 4 channels in any
+  cycle, 16 cycles with duplicate transactions, 145 cycles. Upstream used `=`. With `=` on the three
+  claims: 4 distinct addresses in flight, no duplicates, 97 cycles (135 vs 207 at `MEM_LATENCY=3`).
+  `mem_requests` then reads 4 for 8 loads, because `<= x + 1` inside the channel loop counts once per
+  cycle; `mem_requests_coalesced` likewise counts once per transaction, not per merged consumer.
+- **I-cache totals** sum cores 0 and 1 only (`gpu.sv` "Reduction tree").
+- **MeDiC** never installs: every lane's hit window starts at 0 (SG11 open issue), so `MEDIC=1` is a
+  cache-off switch and the priority pass never fires.
+- **Not wired:** `warp_scheduler.sv` (standalone), `decoded_bar` (ignored), SIMT stack (ADR-006 design).
+  Branches follow lane 0 (AUDIT-4 M1). No opcode is free.
+
+Order: SG17 alone. Then SG18 ∥ SG22 (∥ SG16, xf-only). SG19 and SG20 after SG18; SG21 after SG20;
+SG23 last. At most two sub-goals build at once. Each sub-goal is one PR; its thread splits the work
+into bounded, test-driven subagent tasks.
+
+Verification latency budget (measured in SG17, recorded here): every sub-goal's Verify ≤ 10 min on
+4 cores; `make -j4 matrix` ≤ 60 min (53 today); the differential harness ≤ 2 s of wall time per 1k
+simulated cycles. SG17 records simulated cycles/s per configuration as the baseline; a sub-goal that
+slows any matrix configuration by > 20 % stops and reports.
+
+### SG17 — Round 3 shared interfaces
+Contracts 9–12 below as code and tests, with no RTL behaviour change.
+
+9. **ISA reference model** — `xf/isasim.py`: `run(program, data, threads, *, word_bits=8, addr_bits=8,
+   threads_per_block=4, warps_per_core=1) -> Result(memory, per_block_trace)`. Lockstep blocks,
+   per-lane NZP and active mask, SMEM per block, 8/32-bit wrap, the semantics of `docs/isa.md` plus the
+   reconvergence encoding of contract 10. It flags divergent branches when the SIMT stack is off.
+10. **Reconvergence encoding** — `BR` with `nzp = 000` (never taken today; AUDIT-4 L3) becomes
+   `SYNC imm`: push `imm` as the reconvergence PC of the next divergent branch. `xf/isa.py`,
+   `xf/asm.py` (`SYNC label`), `docs/isa.md` and ADR-011 change in the same commit. Kernels without
+   `SYNC` keep today's semantics.
+11. **Trace fixtures** — `test/fixtures/isa/<case>.json`: `{program, data, threads, params, memory,
+   cycles?}`; `memory` from the model. A differential cocotb test runs every fixture on the RTL and
+   compares memory bit-exactly. Fixtures: every existing kernel test program, the xf kernels on small
+   images, and seeded random straight-line programs (AUDIT-8's 92-instruction generator).
+12. **Multi-warp and telemetry contract** — `gpu.WARPS_PER_CORE` (default 1, bit-identical cycles),
+   `gpu.WARP_POLICY` (0 LRR, 1 GTO, 2 GTLRR; `warp_scheduler.sv` ports unchanged); new outputs
+   `warp_issues_total`, `bar_stall_cycles_total`. Counter semantics: `data_mem_requests` = downstream
+   transactions; `data_mem_requests_coalesced` = consumer requests served by another's transaction;
+   `icache_*_total` = sum over all cores.
+
+Accept: the model reproduces every existing kernel test's memory result and every xf kernel bit-exact
+vs `xf.golden`; the differential test passes on all fixtures under the 10 matrix configurations;
+assembler round-trips `SYNC`; cycles/s baseline recorded above; no RTL change.
+Verify: `python3 -m pytest xf/tests -q && make test_isa_diff && make test_xf_isa_diff`
+
+### SG18 — Controller: parallel channels, exact telemetry
+Claim consumers with blocking assignments (as upstream); count requests and merged consumers with
+blocking accumulators; sum I-cache counters over `NUM_CORES`.
+
+Accept: a directed test sees `DATA_MEM_NUM_CHANNELS` distinct addresses in flight and no duplicate
+transactions; `data_mem_requests` and `data_mem_requests_coalesced` equal counts derived from the
+memory model's serviced transactions in every matrix configuration; I-cache totals equal the per-core
+sum at `NUM_CORES` 1, 2, 4; all suites pass; `bench/` and `docs/xf-bench.md` re-recorded.
+Verify: `make test_controller && make -j4 matrix`, then reverting either claim to `<=` fails `test_controller`.
+
+### SG19 — MeDiC that can install and hit
+Lanes start high-utility (or a neutral warm-up of N accesses before classification), so a hot lane
+caches and a streaming lane is bypassed; priority applies to high-utility lanes.
+
+Accept: under `MEDIC=1` the hot-address case hits (exact counts, `test_l1d_indepth` updated); a
+mixed workload (hot lanes and streaming lanes in one launch) shows the streaming lanes bypassed and the
+hot lanes' hit rate ≥ the `MEDIC=0` hit rate; the priority mutant (`can_consider` always 1) fails a test.
+Verify: `make test_l1d_indepth PARAMS="-Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC=1" && make test_medic`
+
+### SG20 — Multi-warp core
+`WARPS_PER_CORE` blocks resident per core, per-warp PC, NZP, registers, LSU state and SMEM partition;
+`warp_scheduler` picks the warp each issue slot; `BAR` waits until every warp of the block arrives.
+
+Accept: `WARPS_PER_CORE=1` matches every current cycle count exactly; at 2 and 4 every fixture
+matches the model; a barrier test fails when `BAR` is made a no-op; the three policies give the issue
+orders `test_warp_scheduler_*` already assert, now inside the core; added to the matrix.
+Verify: `make test_isa_diff PARAMS="-Pgpu.WARPS_PER_CORE=4" && make test_multiwarp && make -j4 matrix`
+
+### SG21 — SIMT-stack control divergence
+Per-warp active mask and a stack of `{reconvergence PC, pending PC, mask}`; `SYNC` pushes, a divergent
+`BR` splits, reaching the reconvergence PC pops. Disabled lanes do not write registers, NZP or memory.
+
+Accept: the AUDIT-4 M1 program stores `[1, 2, 2, 2]`; nested divergence and loops with per-lane trip
+counts match the model on seeded random structured programs; kernels without `SYNC` keep their cycle
+counts; stack overflow is a simulation `$fatal`.
+Verify: `make test_divergence && make test_isa_diff`
+
+### SG22 — Kernel and binder robustness
+AUDIT-4 M2 (`matmul_tiled` works for any `blockDim` that divides 64-word SMEM, or the binder refuses),
+L3 (assembler rejects `BR` past the program and `BRp`), L4 (binders reject zero `K`, `d`, `T`),
+AUDIT-8 L1/L2 (dtype checks, rmsnorm header), and merge AUDIT-8.
+
+Accept: `test_audit4.py` and `test_audit8.py` xfail markers removed and passing; `make test_xf_matmul
+PARAMS=-Pgpu.THREADS_PER_BLOCK=8` passes or is refused by the binder with a clear error.
+Verify: `python3 -m pytest xf/tests -q && make test_xf_matmul PARAMS=-Pgpu.THREADS_PER_BLOCK=8`
+
+### SG23 — Benchmarks and docs
+`bench/run.py` sweeps `MEM_LATENCY` 0/3/10, `WARPS_PER_CORE` 1/2/4 × policy, and a MeDiC mixed
+workload; `docs/final-report.md`, `ROADMAP.md`, `docs/architecture.md` and ADR-006/007/008/009 rewritten
+to match the code.
+
+Accept: reproducible numbers (two runs equal); every claim in the final report points at a bench row;
+AUDIT-4 L2's stale-doc list is empty.
+Verify: `python3 bench/run.py --phase 11 --label phase-11-all` twice, identical JSON.
+
+### Round 3 audits
+After SG23, separate sessions that wrote none of the code, one lens each: **AUDIT-9 encoding
+soundness** (ISA/model/RTL agreement, divergence with no false negatives: differential fuzz must catch
+every seeded mutant of the stack and the decoder), **AUDIT-10 performance under load** (latency,
+4 warps × 4 cores, channel utilisation, sim throughput against the budget), **AUDIT-11 API/SDK
+consistency** (`xf/` bindings, assembler, `docs/isa.md`, ADRs, Makefile targets), **AUDIT-12 test
+coverage** (mutation). Critical and high findings become SG rows; rounds repeat until one full round has
+none.
 
 ## Audit
 

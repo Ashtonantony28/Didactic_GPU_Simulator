@@ -525,9 +525,16 @@ SG23 last. At most two sub-goals build at once. Each sub-goal is one PR; its thr
 into bounded, test-driven subagent tasks.
 
 Verification latency budget (measured in SG17, recorded here): every sub-goal's Verify ≤ 10 min on
-4 cores; `make -j4 matrix` ≤ 60 min (53 today); the differential harness ≤ 2 s of wall time per 1k
+4 cores; `make -j4 matrix` ≤ 60 min; the differential harness ≤ 2 s of wall time per 1k
 simulated cycles. SG17 records simulated cycles/s per configuration as the baseline; a sub-goal that
 slows any matrix configuration by > 20 % stops and reports.
+
+Baseline (SG17, 4 cores): `make -j4 matrix` 48 min at `2adb710`, 46 min with SG17's differential
+targets added; `make test_all` 15 min. Differential harness, simulated cycles/s (8-bit / 32-bit):
+
+| default | icache | pipelined | coalesce | dcache | medic | all | cores1 | cores4 | latency |
+|---|---|---|---|---|---|---|---|---|---|
+| 4280 / 4060 | 4290 / 4110 | 4330 / 3790 | 4170 / 3930 | 3340 / 3920 | 3220 / 3350 | 3570 / 3060 | 4700 / 4370 | 3340 / 3140 | 4090 / 4060 |
 
 ### SG17 — Round 3 shared interfaces
 Contracts 9–12 below as code and tests, with no RTL behaviour change.

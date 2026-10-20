@@ -2,7 +2,8 @@
 
 Syntax: one instruction per line, `;` comments, `label:` prefixes,
 registers R0-R15 or %blockIdx/%blockDim/%threadIdx, immediates `#5`/`#0x80`,
-branches `BR<n|z|p...> target` where target is a label or instruction index.
+branches `BR<n|z|p...> target` where target is a label or instruction index,
+`SYNC target` sets the reconvergence PC of the next divergent branch (encoded as BR with nzp = 000).
 """
 import re
 import sys
@@ -61,10 +62,12 @@ def assemble(text):
         mnem = mnem.upper()
         args = [a.strip() for a in rest.split(",")] if rest.strip() else []
         try:
-            if (m := _BR.match(mnem)):
+            if (m := _BR.match(mnem)) or mnem == "SYNC":
                 if len(args) != 1:
-                    raise AsmError("BR takes one target")
-                nzp = int("".join("1" if g else "0" for g in m.groups()), 2)
+                    raise AsmError(f"{mnem} takes one target")
+                nzp = int("".join("1" if g else "0" for g in m.groups()), 2) if m else 0
+                if m and not nzp:
+                    raise AsmError("BR needs a condition (n, z, p); use SYNC for nzp = 000")
                 words.append(encode("BR", nzp=nzp, imm=_imm(args[0], labels)))
                 continue
             if mnem not in OPCODES or mnem == "BR":
@@ -88,6 +91,9 @@ def disassemble(words):
     out = []
     for w in words:
         mnem, f = decode(w)
+        if mnem == "BR" and not f["nzp"]:
+            out.append(f"SYNC {f['imm']}")
+            continue
         if mnem == "BR":
             out.append("BR" + "".join(c for c, b in zip("nzp", f"{f['nzp']:03b}") if b == "1") + f" {f['imm']}")
             continue

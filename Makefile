@@ -76,7 +76,8 @@ regression: compile
 regression_xf: compile_xf
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)))
 
-# Every test module once at default parameters, plus harness_selftest, the xf pytest suite and export --check.
+# Every test module once at default parameters, plus harness_selftest, the xf pytest suite, export --check and
+# isa_fixtures --check.
 # The held-out tolerance checks need torch and NANOGPT_DIR, so test_all fails rather than skips them.
 test_all: require_nanogpt compile compile_xf
 	@$(call suite,$(BUILD)/sim.vvp,$(filter-out $(XF_TESTS) $(WS_TESTS),$(TESTS)))
@@ -84,12 +85,13 @@ test_all: require_nanogpt compile compile_xf
 	@for t in $(WS_TESTS) harness_selftest; do $(MAKE) --no-print-directory $$t || exit 1; done
 	XF_REQUIRE_NANOGPT=1 python3 -m pytest xf/tests -q
 	python3 -m xf.export --check
+	python3 -m xf.isa_fixtures --check
 
 require_nanogpt:
 	@python3 -c "import torch" 2>/dev/null && test -n "$$NANOGPT_DIR" \
 	  || { echo "test_all needs torch and NANOGPT_DIR (a nanoGPT Extended checkout @ 03dbab8)"; exit 1; }
 
-# regression, regression_xf, test_l1d_indepth and every test_xf_* per configuration, each in build/matrix/<cfg>.
+# regression, regression_xf, test_l1d_indepth, test_isa_diff and every test_xf_* per configuration, each in build/matrix/<cfg>.
 # `make -j4 matrix` runs configurations in parallel.
 MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency
 CFG_icache    := -Pgpu.ICACHE_LINES=16
@@ -111,7 +113,7 @@ matrix_%:
 	  && echo "matrix $*: OK" || { tail -n 30 build/matrix/$*/log.txt; echo "matrix $*: FAILED (build/matrix/$*/log.txt)"; exit 1; }
 
 matrix_run: compile compile_xf
-	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth))
+	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff))
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)) $(XF_TESTS))
 
 # A failing test, a module with no tests and a missing module must each fail the target.

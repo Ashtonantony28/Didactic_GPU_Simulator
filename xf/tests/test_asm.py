@@ -62,7 +62,7 @@ def test_syntax_variants():
 @pytest.mark.parametrize("src", [
     "FOO R1", "ADD R1, R2", "ADD R1, R2, R16", "CONST R1, #256", "CONST R1, #-1",
     "CONST %threadIdx, #1", "LDR R13, R0", "BRn nowhere", "a: NOP\na: NOP", "RET R1", "BRq 0",
-    "BRn 256",
+    "BRn 256", "BR 0", "SYNC", "SYNC R1",
 ])
 def test_errors(src):
     with pytest.raises(AsmError):
@@ -72,3 +72,8 @@ def test_errors(src):
 def test_error_names_line():
     with pytest.raises(AsmError, match="line 2"):
         assemble("NOP\nADD R1")
+
+
+def test_sync():
+    assert assemble("SYNC end\nBRn end\nend: RET") == [0b0001_000_0_00000010, 0b0001_100_0_00000010, 0xF000]
+    assert disassemble([0b0001_000_0_00000111]) == ["SYNC 7"]

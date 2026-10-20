@@ -31,10 +31,10 @@ address, `LDS`/`STS` the low 8.
 | op   |  rd | immediate |    (CONST)
 +------+-----+-----------+
 
- 15  12 11 9 8         0
-+------+----+-----------+
-|0001  | nzp| immediate |    (BRnzp)
-+------+----+-----------+
+ 15  12 11 9  8  7         0
++------+----+---+-----------+
+|0001  | nzp| 0 | immediate |    (BRnzp; SYNC when nzp = 000)
++------+----+---+-----------+
 ```
 
 ## Opcode table
@@ -42,7 +42,7 @@ address, `LDS`/`STS` the low 8.
 | Opcode  | Mnemonic | Semantics                                                       |
 |---------|----------|-----------------------------------------------------------------|
 | `0000`  | NOP      | no-op                                                           |
-| `0001`  | BRnzp    | if `(NZP & nzp) != 0` then `PC ← imm`                           |
+| `0001`  | BRnzp    | if `(NZP & nzp) != 0` then `PC ← imm`; the block follows thread 0 (below) |
 | `0010`  | CMP      | set NZP from `rs - rt` (unsigned wrap)                          |
 | `0011`  | ADD      | `rd ← rs + rt`                                                  |
 | `0100`  | SUB      | `rd ← rs - rt`                                                  |
@@ -54,6 +54,19 @@ address, `LDS`/`STS` the low 8.
 | `1101`  | SRA      | `rd ← rs >>> rt`  (signed `rs`, unsigned `rt`; `rt ≥ WORD_BITS` fills with the sign) |
 | `1110`  | MAX      | `rd ← max(rs, rt)`  (signed)                                    |
 | `1111`  | RET      | finish current block                                            |
+
+## Branches and SYNC
+
+Every thread evaluates `BRnzp` with its own NZP, but the block (warp) has one PC: the next PC is
+thread 0's target. Branch conditions must therefore be uniform across the block; a disagreeing
+thread silently follows thread 0 (AUDIT-4 M1).
+
+| Encoding | Mnemonic | Semantics |
+|---|---|---|
+| `0001`, nzp `000` | SYNC | set the reconvergence PC of the warp's next divergent branch to `imm`; no-op without the SIMT stack |
+
+`SYNC` and the SIMT-stack semantics are specified in
+[ADR-011](decisions/ADR-011-sync-simt-stack.md); `xf/isasim.py` is the reference model.
 
 ## NZP semantics (compatibility note)
 
@@ -85,7 +98,7 @@ See [ADR-007](decisions/ADR-007-shared-memory.md) for the design.
 
 `xf/isa.py` is the single source for opcodes and field layout; `xf/asm.py`
 assembles `kernels/*.asm` (`python3 -m xf.asm file.asm`). Branches are
-written `BRn`, `BRzp`, `BRnzp`, … with a label or instruction index;
+written `BRn`, `BRzp`, `BRnzp`, … (a bare `BR` is rejected) or `SYNC`, with a label or instruction index;
 immediates are `#5` or `#0x80` (0–255).
 
 ## Signed ops (ADR-010)

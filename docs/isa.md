@@ -98,7 +98,8 @@ See [ADR-007](decisions/ADR-007-shared-memory.md) for the design.
 
 `xf/isa.py` is the single source for opcodes and field layout; `xf/asm.py`
 assembles `kernels/*.asm` (`python3 -m xf.asm file.asm`). Branches are
-written `BRn`, `BRzp`, `BRnzp`, … (a bare `BR` is rejected) or `SYNC`, with a label or instruction index;
+written `BRn`, `BRzp`, `BRnzp`, … (a bare `BR` is rejected) or `SYNC`, with a label or instruction index
+inside the program (a target past the last instruction is rejected);
 immediates are `#5` or `#0x80` (0–255).
 
 ## Signed ops (ADR-010)

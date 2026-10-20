@@ -1,6 +1,7 @@
 """matmul_naive and matmul_tiled vs golden.matmul_i8 (and fused requant), bit-exact."""
 import cocotb
 import numpy as np
+import pytest
 
 from xf import golden, kernels
 from xf.image import Image
@@ -92,3 +93,23 @@ async def test_fused_requant(dut):
         _case("q_s31", *_rand(rng, 2, 8, 4), mq=(1 << 13) - 1, s=31),
     ]
     await _check(dut, cases)
+
+
+@cocotb.test()
+async def block_size_check(dut):
+    """matmul_tiled runs bit-exact at a supported THREADS_PER_BLOCK and is refused by run_launches,
+    before any launch, at an unsupported one (AUDIT-4 M2). Not a test_ function: the model runs those."""
+    tpb = int(dut.THREADS_PER_BLOCK.value)
+    rng = np.random.default_rng(7)
+    a, b = _rand(rng, 5, 9, 8)
+    img = Image()
+    img.alloc("a", a.shape, "i8", data=a)
+    img.alloc("b", b.shape, "i8", data=b)
+    img.alloc("c", [5, 8], "i32")
+    launch = Launch(*kernels.matmul(img, "tiled", "a", "b", "c"), "c.tiled", timeout_cycles=200_000)
+    if tpb <= 16 and (tpb % 4 == 0 or 4 % tpb == 0):
+        _, mem = await run_launches(dut, img, [launch])
+        assert np.array_equal(img.read("c", mem.memory), golden.matmul_i8(a, b))
+    else:
+        with pytest.raises(ValueError, match=f"launch 'c.tiled': blockDim {tpb} unsupported"):
+            await run_launches(dut, img, [launch])

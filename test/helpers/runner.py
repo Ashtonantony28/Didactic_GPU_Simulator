@@ -10,6 +10,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ReadOnly
 
+from xf.kernels import check_block
 from .memory import Memory
 from .setup import setup, launch
 from .logger import logger
@@ -103,19 +104,28 @@ class Launch:
     threads: int
     name: str = ""
     timeout_cycles: int = 20_000
+    max_block: Optional[int] = None   # largest supported blockDim; defaults to program.max_block (xf.kernels)
+
+    def __post_init__(self):
+        if self.max_block is None:
+            self.max_block = getattr(self.program, "max_block", None)
 
 
 async def run_launches(dut, image, launches: List[Launch], mem_latency: int = MEM_LATENCY):
     """Run kernels back to back on one data memory loaded from an xf.image.Image.
 
     The GPU is reset before every launch; data memory persists. Returns
-    (per-launch metrics, data memory).
+    (per-launch metrics, data memory). Raises ValueError, before any launch runs, when the DUT's
+    THREADS_PER_BLOCK is one a launch's kernel does not support (xf.kernels.check_block).
     """
     channels = len(dut.data_mem_read_ready)
     bus = data_bus(dut)
     if bus != (image.word_bits, image.addr_bits):
         raise ValueError(f"image is {image.word_bits}-bit x 2**{image.addr_bits}, "
                          f"DUT data memory is {bus[0]}-bit x 2**{bus[1]}")
+    tpb = int(dut.THREADS_PER_BLOCK.value)
+    for ln in launches:
+        check_block(ln.max_block, tpb, ln.name)
     data_memory = Memory(dut, image.addr_bits, image.word_bits, channels, "data", latency=mem_latency)
     data_memory.load(image.words)
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())

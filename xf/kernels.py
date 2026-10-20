@@ -9,17 +9,38 @@ from .asm import assemble
 from .isa import decode, encode
 
 KERNEL_DIR = Path(__file__).resolve().parents[1] / "kernels"
-TILE = 4  # matmul_tiled: blockDim and tile width
+TILE = 4        # matmul_tiled: tile height and lanes per group
+TILED_MAX_BLOCK = 16   # matmul_tiled stages 4 * blockDim words of the 64-word SMEM
+
+
+class Program(list):
+    """Kernel words. `max_block`, when set, bounds the launch's blockDim, which must also divide
+    or be a multiple of TILE (check_block)."""
+    max_block = None
+
+
+def check_block(max_block, threads_per_block, name=""):
+    """Raise ValueError when a kernel with this max_block cannot run at this blockDim."""
+    b = threads_per_block
+    if max_block is not None and (b > max_block or (b % TILE and TILE % b)):
+        raise ValueError(f"launch {name!r}: blockDim {b} unsupported "
+                         f"(at most {max_block}, dividing or a multiple of {TILE})")
 
 
 def program(name, args_base):
-    words = assemble((KERNEL_DIR / f"{name}.asm").read_text())
+    words = Program(assemble((KERNEL_DIR / f"{name}.asm").read_text()))
     for i, imm in ((0, args_base >> 8), (4, args_base & 0xFF)):
         mnem, f = decode(words[i])
         if mnem != "CONST":
             raise ValueError(f"{name}: word {i} is not part of the ARGS prologue")
         words[i] = encode("CONST", rd=f["rd"], imm=imm)
     return words
+
+
+def require_i8(img, *names):
+    for n in names:
+        if img.segments[n]["dtype"] != "i8":
+            raise ValueError(f"{n} must be i8, got {img.segments[n]['dtype']}")
 
 
 def matmul(img, kind, a, b, c, mq=0, s=0):
@@ -30,6 +51,9 @@ def matmul(img, kind, a, b, c, mq=0, s=0):
     (m, k), (k2, n) = img.segments[a]["shape"], img.segments[b]["shape"]
     if k != k2 or img.segments[c]["shape"] != [m, n]:
         raise ValueError(f"shapes {m}x{k} @ {k2}x{n} -> {img.segments[c]['shape']}")
+    if min(m, k, n) < 1:
+        raise ValueError(f"empty matmul {m}x{k} @ {k2}x{n}")
+    require_i8(img, a, b)
     if not 0 <= s <= 31:
         raise ValueError(f"shift {s} outside [0, 31]")
     if kind == "naive":
@@ -43,4 +67,7 @@ def matmul(img, kind, a, b, c, mq=0, s=0):
     if threads > 255:
         raise ValueError(f"{threads} threads exceed the 8-bit thread count")
     args = [img.base(a), img.base(b), img.base(c), m, k, n, mq, s, (1 << (s - 1)) if s else 0]
-    return program(f"matmul_{kind}", img.alloc(f"{c}.args", [len(args)], "i32", data=args)), threads
+    prog = program(f"matmul_{kind}", img.alloc(f"{c}.args", [len(args)], "i32", data=args))
+    if kind == "tiled":
+        prog.max_block = TILED_MAX_BLOCK
+    return prog, threads

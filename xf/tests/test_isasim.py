@@ -114,6 +114,8 @@ def test_isa_ext_cmp(w, a):
 # 2. xf kernels: the cocotb tests themselves, with run_launches swapped for the model
 async def _model_launches(dut, image, launches, mem_latency=0):
     words, metrics = list(image.words), []
+    for ln in launches:
+        kernels.check_block(ln.max_block, 4, ln.name)
     for i, ln in enumerate(launches):
         r = run(ln.program, words, ln.threads, word_bits=image.word_bits, addr_bits=image.addr_bits)
         assert not r.divergent and not r.stores_conflict, (ln.name, r.divergent, r.stores_conflict)

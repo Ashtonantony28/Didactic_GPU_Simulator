@@ -170,10 +170,12 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
      within `T/2` LSB.
 5. **Launch driver** — `test/helpers/runner.py::run_launches(dut, image,
    launches) -> (metrics, data_memory)` with `Launch(program, threads,
-   name="", timeout_cycles=20000)`: one data memory loaded from the image
+   name="", timeout_cycles=20000, max_block=None)`: one data memory loaded from the image
    and persisting across launches, GPU reset before each launch, per-launch
    metrics identical to `run_kernel`'s; rejects an image whose word/address
-   width differs from the DUT bus.
+   width differs from the DUT bus. `max_block` defaults to the program's `max_block`
+   (`xf.kernels.Program`; `matmul_tiled` sets 16), and every launch is checked against the DUT's
+   `THREADS_PER_BLOCK` with `xf.kernels.check_block` before any runs (SG22).
 6. **Build target** — `make test_xf_<name>` compiles with
    `-Pgpu.WORD_BITS=32 -Pgpu.DATA_MEM_DATA_BITS=32 -Pgpu.DATA_MEM_ADDR_BITS=12`
    (extra `PARAMS` appended) into `build/sim_xf.vvp` and runs

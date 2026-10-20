@@ -1,9 +1,9 @@
 {
-  "cycles": 148,
-  "data_mem_requests": 7,
-  "data_mem_requests_coalesced": 3,
-  "dcache_hits": 0,
-  "dcache_misses": 12,
+  "cycles": 135,
+  "data_mem_requests": 8,
+  "data_mem_requests_coalesced": 0,
+  "dcache_hits": 8,
+  "dcache_misses": 4,
   "icache_hits": 0,
   "icache_misses": 10,
   "threads": 4

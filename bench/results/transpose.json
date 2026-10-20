@@ -1,5 +1,5 @@
 {
-  "cycles": 244,
+  "cycles": 196,
   "data_mem_requests": 16,
   "data_mem_requests_coalesced": 0,
   "dcache_hits": 0,

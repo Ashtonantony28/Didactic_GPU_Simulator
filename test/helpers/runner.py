@@ -53,11 +53,16 @@ def data_bus(dut):
 async def _run(dut, program_memory: Memory, data_memory: Memory, threads: int,
                timeout_cycles: int) -> dict:
     cycles = 0
-    serviced_total = 0
+    reads0, writes0 = len(data_memory.reads), len(data_memory.writes)
+    ready = dut.data_memory_controller.consumer_read_ready
+    prev_ready = consumer_reads = 0
     while _safe_int(dut.done.value) != 1:
         data_memory.run()
         program_memory.run()
         await ReadOnly()
+        r = _safe_int(ready.value)
+        consumer_reads += bin(r & ~prev_ready).count("1")
+        prev_ready = r
         await RisingEdge(dut.clk)
         cycles += 1
         if cycles >= timeout_cycles:
@@ -74,7 +79,22 @@ async def _run(dut, program_memory: Memory, data_memory: Memory, threads: int,
         "dcache_misses": _safe_int(dut.dcache_misses_total.value),
     }
     logger.info(f"Kernel finished: {metrics}")
+    check_counters(dut, metrics, len(data_memory.reads) - reads0, len(data_memory.writes) - writes0, consumer_reads)
     return metrics
+
+
+def check_counters(dut, metrics: dict, reads: int, writes: int, consumer_reads: int):
+    """Contract 12: telemetry equals what the memory model and the controller's consumer handshakes saw."""
+    assert metrics["data_mem_requests"] == reads + writes, \
+        f"data_mem_requests {metrics['data_mem_requests']} != {reads} reads + {writes} writes serviced"
+    assert metrics["data_mem_requests_coalesced"] == consumer_reads - reads, \
+        f"data_mem_requests_coalesced {metrics['data_mem_requests_coalesced']} != " \
+        f"{consumer_reads} consumer reads - {reads} read transactions"
+    cores = len(dut.per_core_icache_hits) // 32
+    for key, sig in (("icache_hits", dut.per_core_icache_hits), ("icache_misses", dut.per_core_icache_misses)):
+        v = _safe_int(sig.value)
+        per_core = [(v >> (32 * c)) & 0xFFFFFFFF for c in range(cores)]
+        assert metrics[key] == sum(per_core), f"{key} total {metrics[key]} != per-core sum {per_core}"
 
 
 @dataclass
@@ -104,6 +124,8 @@ async def run_launches(dut, image, launches: List[Launch], mem_latency: int = ME
         program_memory = Memory(dut, 8, 16, 1, "program", latency=mem_latency)
         data_memory._pending_read = [0] * data_memory.channels
         data_memory._pending_write = [0] * data_memory.channels
+        data_memory._served_read = [False] * data_memory.channels
+        data_memory._served_write = [False] * data_memory.channels
         await launch(dut, program_memory, ln.program, data_memory, None, ln.threads)
         metrics = await _run(dut, program_memory, data_memory, ln.threads, ln.timeout_cycles)
         results.append({"launch": i, "name": ln.name, **metrics})

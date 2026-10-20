@@ -61,6 +61,8 @@ module controller #(
     integer pass;
     reg     found;
     reg     can_consider;
+    // Blocking accumulators: one count per transaction / merged consumer, across all channels in a cycle.
+    reg [31:0] requests, coalesced;
 
     always @(posedge clk) begin
         if (reset) begin
@@ -81,6 +83,8 @@ module controller #(
             end
             for (i = 0; i < NUM_CONSUMERS; i = i + 1) consumer_read_data[i] <= 0;
         end else begin
+            requests  = mem_requests;
+            coalesced = mem_requests_coalesced;
             for (i = 0; i < NUM_CHANNELS; i = i + 1) begin
                 case (controller_state[i])
                     IDLE: begin
@@ -91,12 +95,13 @@ module controller #(
                         for (j = 0; j < NUM_CONSUMERS; j = j + 1) begin
                             can_consider = !PRIORITY_ENABLE || (pass == 1) || consumer_priority[j];
                             if (!found && can_consider && consumer_read_valid[j] && !channel_serving_consumer[j]) begin
-                                channel_serving_consumer[j] <= 1'b1;
+                                // Blocking claim (as upstream), so later channels this cycle skip j.
+                                channel_serving_consumer[j] = 1'b1;
                                 current_consumer[i]         <= j[$clog2(NUM_CONSUMERS+1)-1:0];
                                 mem_read_valid[i]           <= 1'b1;
                                 mem_read_address[i]         <= consumer_read_address[j];
                                 controller_state[i]         <= READ_WAITING;
-                                mem_requests                <= mem_requests + 1;
+                                requests                    = requests + 1;
 
                                 // Coalescing pass: any other consumer reading the same address
                                 // in the same cycle rides this transaction.
@@ -108,9 +113,9 @@ module controller #(
                                             && consumer_read_valid[k]
                                             && !channel_serving_consumer[k]
                                             && consumer_read_address[k] == consumer_read_address[j]) begin
-                                            channel_serving_consumer[k] <= 1'b1;
+                                            channel_serving_consumer[k] = 1'b1;
                                             channel_coalesce_mask[i][k] <= 1'b1;
-                                            mem_requests_coalesced <= mem_requests_coalesced + 1;
+                                            coalesced = coalesced + 1;
                                         end
                                     end
                                 end
@@ -118,13 +123,13 @@ module controller #(
                             end
                             if (WRITE_ENABLE && !found && can_consider
                                 && consumer_write_valid[j] && !channel_serving_consumer[j]) begin
-                                channel_serving_consumer[j] <= 1'b1;
+                                channel_serving_consumer[j] = 1'b1;
                                 current_consumer[i]         <= j[$clog2(NUM_CONSUMERS+1)-1:0];
                                 mem_write_valid[i]          <= 1'b1;
                                 mem_write_address[i]        <= consumer_write_address[j];
                                 mem_write_data[i]           <= consumer_write_data[j];
                                 controller_state[i]         <= WRITE_WAITING;
-                                mem_requests                <= mem_requests + 1;
+                                requests                    = requests + 1;
                                 channel_coalesce_mask[i]    <= ({{(NUM_CONSUMERS-1){1'b0}}, 1'b1} << j);
                                 found = 1'b1;
                             end
@@ -168,6 +173,8 @@ module controller #(
                     default: ;
                 endcase
             end
+            mem_requests           <= requests;
+            mem_requests_coalesced <= coalesced;
         end
     end
 endmodule

@@ -310,11 +310,17 @@ module gpu #(
         end
     endgenerate
 
-    // Reduction tree (only NUM_CORES=2 supported here; trivially extensible).
-    wire [31:0] icache_hits_c0 = per_core_icache_hits[31:0];
-    wire [31:0] icache_miss_c0 = per_core_icache_misses[31:0];
-    wire [31:0] icache_hits_c1 = (NUM_CORES > 1) ? per_core_icache_hits  [63:32] : 32'b0;
-    wire [31:0] icache_miss_c1 = (NUM_CORES > 1) ? per_core_icache_misses[63:32] : 32'b0;
-    assign icache_hits_total   = icache_hits_c0 + icache_hits_c1;
-    assign icache_misses_total = icache_miss_c0 + icache_miss_c1;
+    // Sum over all NUM_CORES.
+    reg [31:0] icache_hits_sum, icache_misses_sum;
+    integer ci;
+    always @(*) begin
+        icache_hits_sum   = 0;
+        icache_misses_sum = 0;
+        for (ci = 0; ci < NUM_CORES; ci = ci + 1) begin
+            icache_hits_sum   = icache_hits_sum   + per_core_icache_hits  [ci*32 +: 32];
+            icache_misses_sum = icache_misses_sum + per_core_icache_misses[ci*32 +: 32];
+        end
+    end
+    assign icache_hits_total   = icache_hits_sum;
+    assign icache_misses_total = icache_misses_sum;
 endmodule

@@ -62,6 +62,17 @@ class Memory:
 
         self._pending_read = [0] * channels   # countdown until ready
         self._pending_write = [0] * channels
+        # Set once a channel's transaction is serviced; cleared when its valid drops. run() samples the
+        # bus before the edge's updates, so valid still reads high one cycle after ready; this keeps that
+        # stale valid from being serviced (and counted) twice.
+        self._served_read = [False] * channels
+        self._served_write = [False] * channels
+        # Serviced transactions, one entry per ready pulse: (channel, address).
+        self.reads: List[tuple] = []
+        self.writes: List[tuple] = []
+        # Per run(): address on each channel with valid high (None when idle).
+        self.read_in_flight: List[Optional[int]] = [None] * channels
+        self.write_in_flight: List[Optional[int]] = [None] * channels
 
     def _pack_data(self, vals: List[int]) -> int:
         packed = 0
@@ -78,8 +89,12 @@ class Memory:
         data_out  = [0] * self.channels
         ready_out = [0] * self.channels
 
+        self.read_in_flight = [read_addrs[i] & ((1 << self.addr_bits) - 1) if read_valids[i] == 1 else None
+                               for i in range(self.channels)]
         for i in range(self.channels):
-            if read_valids[i] == 1:
+            if read_valids[i] == 1 and self._served_read[i]:
+                pass
+            elif read_valids[i] == 1:
                 if self._pending_read[i] < self.latency:
                     self._pending_read[i] += 1
                 else:
@@ -87,9 +102,12 @@ class Memory:
                     data_out[i]  = self.memory[addr]
                     ready_out[i] = 1
                     self._pending_read[i] = 0
+                    self._served_read[i] = True
+                    self.reads.append((i, addr))
                     serviced += 1
             else:
                 self._pending_read[i] = 0
+                self._served_read[i] = False
 
         self.mem_read_data.value  = self._pack_data(data_out)
         self.mem_read_ready.value = int("".join(str(r) for r in ready_out), 2) if self.channels else 0
@@ -98,9 +116,13 @@ class Memory:
             write_valids = _unpack(self.mem_write_valid.value,   1, self.channels)
             write_addrs  = _unpack(self.mem_write_address.value, self.addr_bits, self.channels)
             write_datas  = _unpack(self.mem_write_data.value,    self.data_bits, self.channels)
+            self.write_in_flight = [write_addrs[i] & ((1 << self.addr_bits) - 1) if write_valids[i] == 1 else None
+                                    for i in range(self.channels)]
             wready_out = [0] * self.channels
             for i in range(self.channels):
-                if write_valids[i] == 1:
+                if write_valids[i] == 1 and self._served_write[i]:
+                    pass
+                elif write_valids[i] == 1:
                     if self._pending_write[i] < self.latency:
                         self._pending_write[i] += 1
                     else:
@@ -108,9 +130,12 @@ class Memory:
                         self.memory[addr] = write_datas[i] & ((1 << self.data_bits) - 1)
                         wready_out[i] = 1
                         self._pending_write[i] = 0
+                        self._served_write[i] = True
+                        self.writes.append((i, addr))
                         serviced += 1
                 else:
                     self._pending_write[i] = 0
+                    self._served_write[i] = False
             self.mem_write_ready.value = int("".join(str(r) for r in wready_out), 2) if self.channels else 0
         return serviced
 

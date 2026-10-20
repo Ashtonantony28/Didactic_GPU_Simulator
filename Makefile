@@ -91,7 +91,7 @@ require_nanogpt:
 	@python3 -c "import torch" 2>/dev/null && test -n "$$NANOGPT_DIR" \
 	  || { echo "test_all needs torch and NANOGPT_DIR (a nanoGPT Extended checkout @ 03dbab8)"; exit 1; }
 
-# regression, regression_xf, test_l1d_indepth, test_isa_diff and every test_xf_* per configuration, each in build/matrix/<cfg>.
+# regression, regression_xf, test_l1d_indepth, test_isa_diff, test_controller and every test_xf_* per configuration, each in build/matrix/<cfg>.
 # `make -j4 matrix` runs configurations in parallel.
 MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency
 CFG_icache    := -Pgpu.ICACHE_LINES=16
@@ -113,7 +113,7 @@ matrix_%:
 	  && echo "matrix $*: OK" || { tail -n 30 build/matrix/$*/log.txt; echo "matrix $*: FAILED (build/matrix/$*/log.txt)"; exit 1; }
 
 matrix_run: compile compile_xf
-	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff))
+	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff controller))
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)) $(XF_TESTS))
 
 # A failing test, a module with no tests and a missing module must each fail the target.

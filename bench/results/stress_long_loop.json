@@ -1,10 +1,10 @@
 {
-  "cycles": 335,
+  "cycles": 472,
   "data_mem_requests": 4,
   "data_mem_requests_coalesced": 0,
   "dcache_hits": 0,
   "dcache_misses": 0,
-  "icache_hits": 28,
-  "icache_misses": 14,
+  "icache_hits": 0,
+  "icache_misses": 42,
   "threads": 4
 }

@@ -35,7 +35,7 @@ thread and go back to the user.
 | SG19 | MeDiC that can install and hit | SG18 | — | TODO | — |
 | SG20 | Multi-warp core, warp scheduler wired, real BAR | SG17, SG18 | — | TODO | — |
 | SG21 | SIMT-stack control divergence | SG20 | — | TODO | — |
-| SG22 | Kernel and binder robustness (AUDIT-4, AUDIT-8) | SG17 | — | TODO | — |
+| SG22 | Kernel and binder robustness (AUDIT-4, AUDIT-8) | SG17 | SG22 kernel and binder robustness | DONE | [#29](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/29) |
 | SG23 | Benchmarks under latency and multi-warp; docs refresh | SG19, SG20, SG21 | — | TODO | — |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 

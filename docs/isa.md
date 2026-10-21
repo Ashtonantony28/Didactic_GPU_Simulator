@@ -88,7 +88,7 @@ upstream — see [ADR-001](decisions/ADR-001-deviations.md).
 |---------|----------|--------------------------------------------------------|
 | `1010`  | LDS      | `rd ← SMEM[rs]`  (per-core shared memory load)         |
 | `1011`  | STS      | `SMEM[rs] ← rt`                                        |
-| `1100`  | BAR      | barrier; a no-op under single-warp lockstep            |
+| `1100`  | BAR      | barrier: waits until every unfinished warp of the block reaches a BAR (ADR-012); a no-op at `WARPS_PER_CORE=1` |
 
 SMEM is `SMEM_SIZE` (default 64) words per core, zeroed on reset; addresses
 are masked to `$clog2(SMEM_SIZE)` bits.

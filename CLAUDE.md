@@ -82,6 +82,8 @@ default. Pass them via `iverilog -Pgpu.NAME=VALUE`:
 | `NUM_CORES`     | —     | `2`     | Number of compute cores                         |
 | `WORD_BITS`     | xf    | `8`     | Register/ALU/SMEM width; must equal `DATA_MEM_DATA_BITS` (ADR-010) |
 | `THREADS_PER_BLOCK` | — | `4`     | Threads per block (lockstep within a core)      |
+| `WARPS_PER_CORE` | SG20 | `1`    | Warps per block, sharing `THREADS_PER_BLOCK / WARPS_PER_CORE` lanes (ADR-012, ADR-014) |
+| `WARP_POLICY`   | SG20  | `0`     | Warp scheduler: 0 LRR, 1 GTO, 2 GTLRR (`make test_multiwarp`) |
 
 The warp scheduler (Phase 8) is built as a separate compilation target:
 

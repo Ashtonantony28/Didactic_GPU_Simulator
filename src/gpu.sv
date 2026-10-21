@@ -19,7 +19,9 @@ module gpu #(
     parameter COALESCE                  = 0,
     parameter PIPELINED                 = 0,
     parameter DCACHE_LINES              = 0,
-    parameter MEDIC                     = 0
+    parameter MEDIC                     = 0,
+    parameter WARPS_PER_CORE            = 1,
+    parameter WARP_POLICY               = 0
 ) (
     input  wire                              clk,
     input  wire                              reset,
@@ -50,9 +52,14 @@ module gpu #(
     output wire [31:0]                         icache_hits_total,
     output wire [31:0]                         icache_misses_total,
     output wire [31:0]                         dcache_hits_total,
-    output wire [31:0]                         dcache_misses_total
+    output wire [31:0]                         dcache_misses_total,
+    output wire [31:0]                         warp_issues_total,
+    output wire [31:0]                         bar_stall_cycles_total
 );
     initial if (WORD_BITS != DATA_MEM_DATA_BITS) $fatal(1, "gpu: WORD_BITS (%0d) != DATA_MEM_DATA_BITS (%0d)", WORD_BITS, DATA_MEM_DATA_BITS);
+    initial if (WARPS_PER_CORE < 1 || THREADS_PER_BLOCK % WARPS_PER_CORE != 0)
+        $fatal(1, "gpu: WARPS_PER_CORE (%0d) does not divide THREADS_PER_BLOCK (%0d)", WARPS_PER_CORE, THREADS_PER_BLOCK);
+    initial if (WARP_POLICY < 0 || WARP_POLICY > 2) $fatal(1, "gpu: WARP_POLICY (%0d) is not 0, 1 or 2", WARP_POLICY);
 
     wire [7:0] thread_count;
 
@@ -246,9 +253,11 @@ module gpu #(
         .done(done)
     );
 
-    // Aggregate I-cache telemetry across cores (packed for portability).
+    // Aggregate per-core telemetry (packed for portability).
     wire [NUM_CORES*32-1:0] per_core_icache_hits;
     wire [NUM_CORES*32-1:0] per_core_icache_misses;
+    wire [NUM_CORES*32-1:0] per_core_warp_issues;
+    wire [NUM_CORES*32-1:0] per_core_bar_stall_cycles;
 
     genvar c;
     generate
@@ -283,7 +292,9 @@ module gpu #(
                 .PROGRAM_MEM_DATA_BITS(PROGRAM_MEM_DATA_BITS),
                 .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
                 .ICACHE_LINES(ICACHE_LINES),
-                .PIPELINED(PIPELINED)
+                .PIPELINED(PIPELINED),
+                .WARPS_PER_CORE(WARPS_PER_CORE),
+                .WARP_POLICY(WARP_POLICY)
             ) core_instance (
                 .clk(clk),
                 .reset(core_reset[c]),
@@ -305,14 +316,16 @@ module gpu #(
                 .data_mem_write_data(core_lsu_write_data),
                 .data_mem_write_ready(core_lsu_write_ready),
                 .icache_hits(per_core_icache_hits[c*32 +: 32]),
-                .icache_misses(per_core_icache_misses[c*32 +: 32])
+                .icache_misses(per_core_icache_misses[c*32 +: 32]),
+                .warp_issues(per_core_warp_issues[c*32 +: 32]),
+                .bar_stall_cycles(per_core_bar_stall_cycles[c*32 +: 32])
             );
         end
     endgenerate
 
     // Sum over all NUM_CORES.
-    reg [31:0] icache_hits_sum, icache_misses_sum;
-    integer ci;
+    reg [31:0] icache_hits_sum, icache_misses_sum, warp_issues_sum, bar_stall_cycles_sum;
+    integer ci, cw;
     always @(*) begin
         icache_hits_sum   = 0;
         icache_misses_sum = 0;
@@ -321,6 +334,16 @@ module gpu #(
             icache_misses_sum = icache_misses_sum + per_core_icache_misses[ci*32 +: 32];
         end
     end
-    assign icache_hits_total   = icache_hits_sum;
-    assign icache_misses_total = icache_misses_sum;
+    always @(*) begin
+        warp_issues_sum      = 0;
+        bar_stall_cycles_sum = 0;
+        for (cw = 0; cw < NUM_CORES; cw = cw + 1) begin
+            warp_issues_sum      = warp_issues_sum      + per_core_warp_issues     [cw*32 +: 32];
+            bar_stall_cycles_sum = bar_stall_cycles_sum + per_core_bar_stall_cycles[cw*32 +: 32];
+        end
+    end
+    assign icache_hits_total      = icache_hits_sum;
+    assign icache_misses_total    = icache_misses_sum;
+    assign warp_issues_total      = warp_issues_sum;
+    assign bar_stall_cycles_total = bar_stall_cycles_sum;
 endmodule

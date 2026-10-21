@@ -54,6 +54,13 @@ test_warp_scheduler_gtlrr: WS_TEST=gtlrr
 test_warp_scheduler_gtlrr: compile_ws
 	$(call cocotb,test.test_warp_scheduler_$(WS_TEST),$(BUILD)/ws.vvp)
 
+# MeDiC mixed workload: the same configuration at MEDIC=0 (built in $(BUILD)/medic0) sets the hot-lane baseline.
+test_medic: PARAMS = -Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC=1
+test_medic: compile
+	$(MAKE) --no-print-directory BUILD=$(BUILD)/medic0 PARAMS="$(subst MEDIC=1,MEDIC=0,$(PARAMS))" compile
+	export MEDIC_BASELINE=$(BUILD)/medic0/medic.json; $(call cocotb,test.test_medic,$(BUILD)/medic0/sim.vvp)
+	export MEDIC_BASELINE=$(BUILD)/medic0/medic.json; $(call cocotb,test.test_medic,$(BUILD)/sim.vvp)
+
 test_xf_%: compile_xf
 	$(call cocotb,test.test_xf_$*,$(BUILD)/sim_xf.vvp)
 
@@ -80,9 +87,9 @@ regression_xf: compile_xf
 # isa_fixtures --check.
 # The held-out tolerance checks need torch and NANOGPT_DIR, so test_all fails rather than skips them.
 test_all: require_nanogpt compile compile_xf
-	@$(call suite,$(BUILD)/sim.vvp,$(filter-out $(XF_TESTS) $(WS_TESTS),$(TESTS)))
+	@$(call suite,$(BUILD)/sim.vvp,$(filter-out $(XF_TESTS) $(WS_TESTS) test_medic,$(TESTS)))
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(XF_TESTS))
-	@for t in $(WS_TESTS) harness_selftest; do $(MAKE) --no-print-directory $$t || exit 1; done
+	@for t in $(WS_TESTS) test_medic harness_selftest; do $(MAKE) --no-print-directory $$t || exit 1; done
 	XF_REQUIRE_NANOGPT=1 python3 -m pytest xf/tests -q
 	python3 -m xf.export --check
 	python3 -m xf.isa_fixtures --check
@@ -91,7 +98,8 @@ require_nanogpt:
 	@python3 -c "import torch" 2>/dev/null && test -n "$$NANOGPT_DIR" \
 	  || { echo "test_all needs torch and NANOGPT_DIR (a nanoGPT Extended checkout @ 03dbab8)"; exit 1; }
 
-# regression, regression_xf, test_l1d_indepth, test_isa_diff, test_controller and every test_xf_* per configuration, each in build/matrix/<cfg>.
+# regression, regression_xf, test_l1d_indepth, test_isa_diff, test_controller and every test_xf_* per configuration, each in build/matrix/<cfg>;
+# test_medic too where MEDIC=1.
 # `make -j4 matrix` runs configurations in parallel.
 MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency
 CFG_icache    := -Pgpu.ICACHE_LINES=16
@@ -115,6 +123,7 @@ matrix_%:
 matrix_run: compile compile_xf
 	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff controller))
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)) $(XF_TESTS))
+	@$(if $(findstring MEDIC=1,$(PARAMS)),$(MAKE) --no-print-directory test_medic)
 
 # A failing test, a module with no tests and a missing module must each fail the target.
 harness_selftest: compile

@@ -8,18 +8,19 @@
 // Per-lane hit / miss telemetry feeds the MeDiC machinery:
 //   - cache_hits[lane]    : counter, total hits since telemetry_reset.
 //   - cache_misses[lane]  : counter, total misses.
-//   - warp_low_utility[lane]: combinational; 1 when this lane's running
-//     window hit rate is below MEDIC_THRESHOLD/16. Drives bypass.
+//   - warp_low_utility[lane]: combinational; 1 when fewer than MEDIC_THRESHOLD
+//     of the lane's last 4 lookups hit. Drives bypass.
 //
-// When MEDIC=1 and warp_low_utility[lane]=1, the lane's miss path skips the
-// cache install — read goes straight to memory, no LRU update.
+// Windows reset to all hits, so every lane starts high-utility (ADR-009): it
+// installs until its misses push it below the threshold. When MEDIC=1 and
+// warp_low_utility[lane]=1, the lane's miss fill skips the cache install.
 module l1d_cache #(
     parameter NUM_CONSUMERS    = 8,
     parameter ADDR_BITS        = 8,
     parameter DATA_BITS        = 8,
     parameter LINES            = 16,
     parameter MEDIC            = 0,
-    parameter MEDIC_THRESHOLD  = 4    // hits in window < this → low utility
+    parameter MEDIC_THRESHOLD  = 2    // hits in window < this → low utility
 ) (
     input  wire                              clk,
     input  wire                              reset,
@@ -66,7 +67,7 @@ module l1d_cache #(
     reg [1:0] state_arr [NUM_CONSUMERS-1:0];
     localparam [1:0] L_IDLE = 2'b00, L_MISS = 2'b01, L_FILL = 2'b10, L_WT = 2'b11;
 
-    // Per-lane rolling hit/miss window (4 bits each = 16 sample window).
+    // Per-lane rolling hit/miss window (last 4 lookups).
     reg [3:0] hit_window  [NUM_CONSUMERS-1:0];
     reg [3:0] miss_window [NUM_CONSUMERS-1:0];
 
@@ -79,8 +80,6 @@ module l1d_cache #(
     genvar lu;
     generate
         for (lu = 0; lu < NUM_CONSUMERS; lu = lu + 1) begin : util
-            // High utility = recent hits > threshold (out of window-size).
-            // Low utility  = recent hits < threshold.
             wire [4:0] h = {1'b0, hit_window[lu][3]} + {1'b0, hit_window[lu][2]} + {1'b0, hit_window[lu][1]} + {1'b0, hit_window[lu][0]};
             assign warp_low_utility[lu]  = (h < MEDIC_THRESHOLD);
             assign warp_high_utility[lu] = (h >= MEDIC_THRESHOLD);
@@ -117,7 +116,7 @@ module l1d_cache #(
                 mem_write_valid[i]      <= 1'b0;
                 mem_write_address[i]    <= {ADDR_BITS{1'b0}};
                 mem_write_data[i]       <= {DATA_BITS{1'b0}};
-                hit_window[i]           <= 4'b0;
+                hit_window[i]           <= 4'b1111;
                 miss_window[i]          <= 4'b0;
             end
             hits_total   <= 32'b0;
@@ -127,7 +126,7 @@ module l1d_cache #(
                 hits_total   <= 32'b0;
                 misses_total <= 32'b0;
                 for (i = 0; i < NUM_CONSUMERS; i = i + 1) begin
-                    hit_window[i]  <= 4'b0;
+                    hit_window[i]  <= 4'b1111;
                     miss_window[i] <= 4'b0;
                 end
             end

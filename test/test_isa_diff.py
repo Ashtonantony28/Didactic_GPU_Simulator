@@ -29,7 +29,8 @@ def expected(fx, warps):
 
 
 def diff_test(word_bits):
-    warps = int(cocotb.top.WARPS_PER_CORE.value)
+    top = getattr(cocotb, "top", None)  # None when imported outside a simulation (xf/tests)
+    warps = int(top.WARPS_PER_CORE.value) if top is not None else 1
     fixtures = {p.stem: load(p) for p in sorted(FIXTURE_DIR.glob("*.json"))}
     fixtures = {k: fx for k, fx in fixtures.items() if fx["params"]["word_bits"] == word_bits}
     want = {k: expected(fx, warps) for k, fx in fixtures.items()}

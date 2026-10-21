@@ -1,7 +1,7 @@
 """In-depth tests for the Phase 9 L1-D cache.
 
 Verifies, at the build's DCACHE_LINES / MEDIC / word width:
-- Exact hit/miss counts for repeated reads of one address (all misses under MeDiC).
+- Exact hit/miss counts for repeated reads of one address (with or without MeDiC).
 - A read after a write by the same thread returns the written value.
 - A write by one block is read by a later block on any core.
 - Disabling the cache leaves the downstream request count unchanged.
@@ -38,7 +38,7 @@ def word_mask(dut):
 
 @cocotb.test()
 async def test_hot_address_hits(dut):
-    """Every thread reads address 0 three times: 4 misses then 8 hits, or 12 misses under MeDiC."""
+    """Every thread reads address 0 three times: 4 misses then 8 hits, with or without MeDiC."""
     p = [
         encode(CONST, rd=0, imm=0),          # addr = 0
         encode(LDR,   rd=1, rs=0, rt=0),     # R1 = mem[0]
@@ -56,9 +56,9 @@ async def test_hot_address_hits(dut):
     for i in range(4):
         assert mem.memory[16 + i] == 21, f"thread {i}: got {mem.memory[16+i]}"
     write_bench_result("l1d_hot_address", metrics)
-    lines, medic, _ = params(dut)
-    # MeDiC starts every lane low-utility, so it never installs a line.
-    expect = (0, 0) if lines == 0 else (0, 12) if medic else (8, 4)
+    lines, _, _ = params(dut)
+    # Under MeDiC every lane starts high-utility and one miss in three keeps it there (ADR-009).
+    expect = (0, 0) if lines == 0 else (8, 4)
     got = (metrics["dcache_hits"], metrics["dcache_misses"])
     assert got == expect, f"(hits, misses) = {got}, expected {expect}"
 

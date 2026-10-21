@@ -346,3 +346,36 @@ MUL R6, R4, R5
 ADD R7, R3, R0
 STR R7, R6
 RET
+
+;; == test_medic.program.0 ==
+CONST R12, #2
+DIV R0, %threadIdx, R12
+CONST R7, #4
+MUL R7, R7, %blockIdx
+MUL R7, R7, R0
+SUB R2, %threadIdx, R12
+ADD R2, R2, R7
+CONST R11, #16
+MUL R1, %blockIdx, R12
+ADD R1, R1, R11
+ADD R1, R1, %threadIdx
+SUB R5, R2, R1
+MUL R5, R5, R0
+ADD R5, R1, R5
+CONST R3, #32
+MUL R6, R3, R0
+SUB R3, R3, R6
+CONST R4, #0
+CONST R10, #240
+MUL R9, %blockIdx, %blockDim
+ADD R10, R10, R9
+ADD R10, R10, %threadIdx
+
+;; == test_medic.program.1 ==
+LDR R6, R5
+ADD R4, R4, R6
+STR R10, R4
+ADD R5, R5, R3
+
+;; == test_medic.program.2 ==
+RET

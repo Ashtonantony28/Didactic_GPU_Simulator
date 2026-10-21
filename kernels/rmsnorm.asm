@@ -3,7 +3,7 @@
 ; thread sums its own row. Both loops are uniform across the block (d and kmax trips); the
 ; normalization step is branch-free, so rows of one block may take different k.
 ;
-; Args block (i32, see xf/elementwise.py): x, w, lut, out, d, kmax, lutmax, M, s, 2^s.
+; Args block (i32, see xf/elementwise.py): x, w, lut, out, d, max(kmax, 1), lutmax, M, s, 2^s.
     CONST R12, #0               ; ARGS prologue: R12 = hi*256 + lo, patched by xf.kernels.program
     CONST R0, #16
     MUL  R12, R12, R0

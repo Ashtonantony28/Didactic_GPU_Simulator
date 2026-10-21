@@ -68,7 +68,10 @@ def assemble(text):
                 nzp = int("".join("1" if g else "0" for g in m.groups()), 2) if m else 0
                 if m and not nzp:
                     raise AsmError("BR needs a condition (n, z, p); use SYNC for nzp = 000")
-                words.append(encode("BR", nzp=nzp, imm=_imm(args[0], labels)))
+                target = _imm(args[0], labels)
+                if not 0 <= target < len(body):
+                    raise AsmError(f"target {target} outside the {len(body)}-instruction program")
+                words.append(encode("BR", nzp=nzp, imm=target))
                 continue
             if mnem not in OPCODES or mnem == "BR":
                 raise AsmError(f"unknown mnemonic {mnem!r}")

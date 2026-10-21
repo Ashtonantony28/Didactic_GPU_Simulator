@@ -6,7 +6,7 @@ one thread per output element. Semantics are xf.golden's, bit for bit.
 import math
 
 from . import golden
-from .kernels import program
+from .kernels import program, require_i8
 
 
 def _rnd(s):
@@ -27,6 +27,8 @@ def _same(img, out, *names):
 
 def _bind(img, kernel, out, args):
     threads = math.prod(_shape(img, out))
+    if threads < 1:
+        raise ValueError(f"{out} is empty")
     if threads > 255:
         raise ValueError(f"{threads} threads exceed the 8-bit thread count")
     return program(kernel, img.alloc(f"{out}.args", [len(args)], "i32", data=args)), threads
@@ -40,12 +42,14 @@ def requant(img, x, out, m, s):
 
 def relu(img, x, out):
     _same(img, out, x)
+    require_i8(img, x)
     return _bind(img, "relu", out, [img.base(x), img.base(out)])
 
 
 def swiglu(img, gate, up, lut, out, m, s):
     """out = golden.swiglu_lut(gate, up, lut, m, s)."""
     _same(img, out, gate, up)
+    require_i8(img, gate, up)
     if _shape(img, lut) != [256]:
         raise ValueError(f"{lut} must have 256 entries")
     return _bind(img, "swiglu", out, [img.base(gate), img.base(up), img.base(lut), img.base(out), m, s, _rnd(s)])
@@ -54,12 +58,14 @@ def swiglu(img, gate, up, lut, out, m, s):
 def residual_add(img, a, b, out, ma, mb, s):
     """out = golden.residual_add(a, b, ma, mb, s)."""
     _same(img, out, a, b)
+    require_i8(img, a, b)
     return _bind(img, "residual_add", out, [img.base(a), img.base(b), img.base(out), ma, mb, s, _rnd(s)])
 
 
 def rmsnorm(img, x, w, lut, out, m, s):
     """out = golden.rmsnorm_int(x, w, lut, m, s) over the rows of x (T, d)."""
     _same(img, out, x)
+    require_i8(img, x, w)
     d = _shape(img, x)[-1]
     if _shape(img, w) != [d]:
         raise ValueError(f"{w} shape {_shape(img, w)} != [{d}]")
@@ -82,6 +88,7 @@ def transpose(img, x, out):
 def softmax(img, scores, lut, out, one):
     """out = golden.softmax_lut(scores, lut, one), causal, over square scores (T, T)."""
     _same(img, out, scores)
+    require_i8(img, scores)
     t, t2 = _shape(img, scores)
     if t != t2:
         raise ValueError(f"{scores} must be square, got {[t, t2]}")

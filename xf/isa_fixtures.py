@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from .asm import assemble
 from .isasim import run
-from .kernels import KERNEL_DIR
+from .kernels import KERNEL_DIR, check_block
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "test" / "fixtures" / "isa"
 WIDTHS = {8: 8, 32: 12}   # word_bits -> addr_bits
@@ -79,6 +79,7 @@ def _xf_cases():
     async def record(dut, image, launches, mem_latency=0):
         words = list(image.words)
         for ln in launches:
+            check_block(ln.max_block, 4, ln.name)
             r = run(ln.program, words, ln.threads, word_bits=image.word_bits, addr_bits=image.addr_bits)
             key = f"xf_{mod.__name__.split('test_xf_')[-1]}_{names[skel(ln.program)]}"
             if key not in best or r.steps < best[key][0]:

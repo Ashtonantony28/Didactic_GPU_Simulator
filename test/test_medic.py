@@ -151,8 +151,13 @@ async def test_medic_mixed(dut):
     hot_hits = hot_reads - sum(misses[i] for i in hot)
     assert sum(s["reads"][i] for i in stream) == hot_reads == ITERS * BLOCKS * 2
     report = dict(hot_hits=hot_hits, hot_reads=hot_reads, cycles=metrics["cycles"],
-                  install=s["install"], bypass=s["bypass"], decided=s["decided"])
+                  install=s["install"], bypass=s["bypass"], decided=s["decided"],
+                  dcache_hits=metrics["dcache_hits"], dcache_misses=metrics["dcache_misses"],
+                  data_mem_requests=metrics["data_mem_requests"])
     dut._log.info(f"MEDIC={medic} {report}")
+    if os.environ.get("BENCH_OUT"):   # bench/run.py --phase 11
+        with open(os.path.join(os.environ["BENCH_OUT"], f"medic{medic}.json"), "w") as f:
+            json.dump(report, f, indent=2, sort_keys=True)
 
     if not medic:
         assert sum(s["bypass"]) == 0, f"bypass at MEDIC=0: {s['bypass']}"

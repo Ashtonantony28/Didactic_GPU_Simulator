@@ -1,70 +1,38 @@
 # ADR-006 — Branch divergence (Phase 6)
 
 ## Status
-Partial — kernel-level data divergence implemented and tested; SIMT-stack
-control divergence designed but not wired.
+Implemented in two steps. Phase 6: data-divergent kernels under one block-wide PC. SG21: SIMT-stack
+control divergence behind `gpu.SIMT_STACK` (default 0), with the `SYNC` encoding of
+[ADR-011](ADR-011-sync-simt-stack.md) and the RTL of [ADR-015](ADR-015-simt-stack-rtl.md).
 
 ## Context
-The upstream scheduler advances all threads in a block to the same
-`next_pc`. Real divergence (different threads at different PCs) requires
-per-thread PC plus an "active mask" that gates writes/memops.
+The upstream scheduler advances all threads of a block to one `next_pc`. Threads whose branch
+condition disagrees follow the chosen thread (today the warp's lowest thread; AUDIT-4 M1). Real
+control divergence needs an active mask that gates writes and memory operations, and a way to
+reconverge.
 
-## Phase 6 deliverable spectrum
-
-| Level         | What it means                                                | Effort       |
-|---------------|--------------------------------------------------------------|--------------|
-| Data-divergent kernels | All threads execute the same instructions, but produce different data via mask-blend | Hours |
-| SIMT stack     | Per-thread PC + active mask + immediate-post-dominator reconvergence (GPGPU-Sim style) | Weeks |
-| Independent thread scheduling (Volta+) | Threads at same PC dynamically grouped | Months |
+| Level | What it means |
+|---|---|
+| Data-divergent kernels | Every thread runs the same instructions; per-thread results come from a mask blend |
+| SIMT stack | Per-warp active mask and stack of `{pc, rpc, mask}`, reconverging at a marked PC (GPGPU-Sim style) |
+| Independent thread scheduling (Volta+) | Threads at the same PC regrouped dynamically; not planned |
 
 ## Decision
+- **Phase 6** shipped the data-divergent kernel `test/test_divergent_relu.py`, a branch-free program
+  that is correct under a single PC.
+- **SG21** added the SIMT stack. The reconvergence point comes from the program: `SYNC imm` (`BR` with
+  `nzp = 000`, a branch that could never be taken) sets the PC where the next divergent branch
+  reconverges. A divergent branch pushes the not-taken and taken sides; the taken side runs first;
+  entries pop when their PC reaches the reconvergence PC. ADR-011 gives the exact rules, ADR-015 the RTL.
 
-Phase 6 ships the data-divergent kernel (`test/test_divergent_relu.py`),
-which compiles to a no-branch program and proves the existing single-PC
-SIMT correctly handles per-thread data divergence under masking.
-
-The SIMT-stack design is documented below for a future phase.
-
-## SIMT-stack design (for future implementation)
-
-```
-            ┌──────────────┐
-            │   warp PC    │  (8 bits)
-            │ active_mask  │  (THREADS_PER_BLOCK bits)
-            │ reconv_pc    │  (8 bits, post-dominator)
-            └──────────────┘
-                  ▲
-                  │ push on divergent branch
-                  │ pop  when warp PC == reconv_pc
-            ┌──────────────┐
-            │ SIMT stack   │
-            │  (8 entries) │
-            └──────────────┘
-```
-
-`scheduler.sv` would:
-
-- On `BRnzp` in EXECUTE: collect per-thread NZP-match into a `take_mask`.
-  If `take_mask` is all-1 or all-0, no divergence — push nothing.
-  Otherwise:
-  1. Push `{not_take_pc = pc+1, not_take_mask = ~take_mask & active, reconv_pc = post_dominator}`.
-  2. Continue with `{pc = imm, mask = take_mask & active}`.
-- On UPDATE if `current_pc == top.reconv_pc`: pop the stack and OR the
-  popped mask back into `active_mask`.
-
-Per-thread PCs are then `current_pc` for all threads (we keep a single
-warp PC + active mask, since all running threads are at the same PC).
-
-Identifying the immediate post-dominator at runtime needs either
-compiler markers in the ISA (e.g. `BRnzp.divergent` + paired
-`RECONVERGE`) or a control-flow analyzer in the assembler. We'd add an
-`RC` (reconverge) opcode and require the assembler/programmer to mark
-reconvergence points.
+The Phase 6 design reserved opcode `1101` for an `RC` (reconverge) instruction. That reservation is
+void: ADR-010 assigned `1101` to `SRA` and no opcode is free, so the marker reuses the dead `BR nzp=000`
+encoding instead.
 
 ## Consequences
-
-- `test/test_divergent_relu.py` passes under the current single-PC
-  scheduler.
-- ISA reservation: a future opcode `1101` for `RC` (reconverge) is
-  noted.
-- Phase 6 bench numbers match Phase 5 (no scheduler change).
+- With `SIMT_STACK = 0` (default) branches must be uniform within a warp, as `docs/isa.md` states;
+  `SYNC` is a no-op.
+- With `SIMT_STACK = 1`, kernels without divergent branches keep their cycle counts, and a divergent
+  if/else beats the mask blend on the same data (`bench/phase-11-all.json`, section `simt`;
+  `docs/final-report.md`).
+- `make test_divergence` checks the stack against `xf/isasim.py`.

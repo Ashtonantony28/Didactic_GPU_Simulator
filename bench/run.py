@@ -8,6 +8,11 @@ Usage:
 Each test writes its own JSON via runner.write_bench_result(); this driver
 re-runs the regression and aggregates into bench/phase-N.json.
 
+--phase 11 runs the phase-11 sweep (P11 below) through test/test_bench_sweep.py and `make test_medic`, at most two
+simulations at once, and writes bench/<label>.json; row keys are `<section>/<build>/<kernel>/L<latency>`.
+--check-citations checks that every `bench/<file>.json#<key>` cited in docs/final-report.md names an existing row
+(`{a,b}` in a key cites one row per alternative).
+
 --xf runs test/test_xf_bench.py (bench `<b>` from label `xf-<b>`) under every
 XF_CONFIGS build, writes bench/<label>.json and regenerates docs/xf-bench.md
 from every bench/xf-*.json. Each row's outputs are checked bit-exact in the run.
@@ -16,8 +21,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,6 +34,22 @@ DEFAULT_TESTS = [
 ]
 XF_CONFIGS = ["", "COALESCE=1", "DCACHE_LINES=16", "COALESCE=1 DCACHE_LINES=16"]
 XF_COLS = ["cycles", "data_mem_requests", "data_mem_requests_coalesced", "dcache_hits", "dcache_misses"]
+
+LATENCIES = "0,3,10"
+CONFIGS = {"default": "", "icache": "ICACHE_LINES=16", "coalesce": "COALESCE=1", "pipelined": "PIPELINED=1",
+           "dcache": "DCACHE_LINES=16", "medic": "DCACHE_LINES=16 MEDIC=1",
+           "all": "ICACHE_LINES=16 COALESCE=1 PIPELINED=1 DCACHE_LINES=16 MEDIC=1"}
+WARPS = {"w1": "WARPS_PER_CORE=1"} | {f"w{w}{name}": f"WARPS_PER_CORE={w} THREADS_PER_BLOCK={4 * w} WARP_POLICY={pol}"
+                                      for w in (2, 4) for pol, name in enumerate(("lrr", "gto", "gtlrr"))}
+SIMT_KERNELS = "divergent_relu,branch_relu,lane_loop,uniform_loop"
+# section -> build -> (params, kernels, data-memory-only latency). Warp builds keep 4 lanes per warp and 32 threads.
+P11 = {
+    "kernels": {b: (p, ",".join(DEFAULT_TESTS), False) for b, p in CONFIGS.items()},
+    "warps": {b: (p, "stream,poly", True) for b, p in WARPS.items()},
+    "warps_icache": {b: ("ICACHE_LINES=16 " + p, "stream,poly", False) for b, p in WARPS.items()},
+    "simt": {"simt0": ("", SIMT_KERNELS.replace("branch_relu,lane_loop,", ""), False),
+             "simt1": ("SIMT_STACK=1", SIMT_KERNELS, False)},
+}
 
 
 def iv(params: str) -> str:
@@ -105,14 +128,100 @@ def write_xf_doc():
     (ROOT / "docs" / "xf-bench.md").write_text("\n".join(lines))
 
 
+def _make(build: Path, target: str, params: str, env: dict) -> str | None:
+    build.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in ("BENCH_RESULTS", "MEM_LATENCY")} | env
+    res = subprocess.run(["make", "--no-print-directory", f"BUILD={build}", f"PARAMS={iv(params)}", target],
+                         cwd=ROOT, capture_output=True, text=True, env=env)
+    return None if res.returncode == 0 else "\n".join(res.stdout.splitlines()[-12:])
+
+
+def _sweep(section: str, build: str, params: str, kernels: str, data_only: bool):
+    d = ROOT / "build" / "phase11" / f"{section}-{build}"
+    out = d / "rows.json"
+    out.unlink(missing_ok=True)
+    err = _make(d, "test_bench_sweep", params, {"BENCH_KERNELS": kernels, "BENCH_LATENCIES": LATENCIES,
+                                                "BENCH_OUT": str(out), "BENCH_DATA_ONLY": str(int(data_only))})
+    rows = {} if err else {f"{section}/{build}/{k}": v for k, v in json.loads(out.read_text()).items()}
+    return f"{section}/{build}", err, rows
+
+
+def _medic(lat: str):
+    d = ROOT / "build" / "phase11" / f"medic-L{lat}"
+    for m in (0, 1):
+        (d / f"medic{m}.json").unlink(missing_ok=True)
+    err = _make(d, "test_medic", CONFIGS["medic"], {"MEM_LATENCY": lat, "BENCH_OUT": str(d)})
+    rows = {} if err else {f"medic/medic{m}/L{lat}": json.loads((d / f"medic{m}.json").read_text()) for m in (0, 1)}
+    return f"medic/L{lat}", err, rows
+
+
+def run_phase11(label: str) -> int:
+    jobs = [(_sweep, (sec, b, *spec)) for sec, builds in P11.items() for b, spec in builds.items()]
+    jobs += [(_medic, (lat,)) for lat in LATENCIES.split(",")]
+    rows, fails = {}, 0
+    with ThreadPoolExecutor(max_workers=2) as pool:   # at most two simulations at once
+        for name, err, r in pool.map(lambda j: j[0](*j[1]), jobs):
+            print(f"  [{'FAIL' if err else 'PASS'}] {name}")
+            if err:
+                print(err)
+                fails += 1
+            rows |= r
+    builds = {f"{sec}/{b}": {"params": spec[0], "latency": "data memory" if spec[2] else "data and program memory"}
+              for sec, bs in P11.items() for b, spec in bs.items()}
+    builds["medic"] = {"params": CONFIGS["medic"], "latency": "data memory L + 4, program memory L (test_medic)"}
+    if fails:
+        return 1
+    path = ROOT / "bench" / f"{label}.json"
+    path.write_text(json.dumps({"phase": 11, "latencies": LATENCIES, "builds": builds, "rows": rows},
+                               indent=2, sort_keys=True) + "\n")
+    print(f"Wrote {path} ({len(rows)} rows)")
+    return 0
+
+
+CITE = re.compile(r"bench/([\w.-]+\.json)#([\w./={},+-]+)")
+
+
+def expand(key: str) -> list[str]:
+    """`a/{x,y}/L{0,10}` -> a/x/L0, a/x/L10, a/y/L0, a/y/L10."""
+    m = re.search(r"\{([^{}]*)\}", key)
+    return [k for alt in m[1].split(",") for k in expand(key[:m.start()] + alt + key[m.end():])] if m else [key]
+
+
+def resolve(file: str, key: str) -> bool:
+    path = ROOT / "bench" / file
+    if not path.exists():
+        return False
+    d = json.loads(path.read_text())
+    if isinstance(d.get("rows"), dict):
+        return key in d["rows"]
+    if isinstance(d.get("rows"), list):   # xf-*.json: <case>/<kind>/<params, spaces as +, or default>
+        return any(f"{r['case']}/{r['kind']}/{r['params'].replace(' ', '+') or 'default'}" == key for r in d["rows"])
+    return any(r.get("name") == key for r in d.get("results", []))
+
+
+def check_citations(doc: Path = ROOT / "docs" / "final-report.md") -> list[str]:
+    """Citations in `doc` (braces expand to several rows) that do not resolve; a doc with none fails too."""
+    cites = [(f, k) for f, key in CITE.findall(doc.read_text()) for k in expand(key)]
+    if not cites:
+        return [f"{doc}: no bench citations"]
+    return [f"bench/{f}#{k}" for f, k in dict.fromkeys(cites) if not resolve(f, k)]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", type=int, default=0)
     ap.add_argument("--params", default="")
     ap.add_argument("--label", default=None)
     ap.add_argument("--xf", action="store_true")
+    ap.add_argument("--check-citations", action="store_true")
     ap.add_argument("tests", nargs="*", default=DEFAULT_TESTS)
     args = ap.parse_args()
+    if args.check_citations:
+        bad = check_citations()
+        print("\n".join(f"unresolved: {b}" for b in bad) or "citations: OK")
+        return 1 if bad else 0
+    if args.phase == 11:
+        return run_phase11(args.label or "phase-11-all")
     if args.xf:
         if not (args.label or "").startswith("xf-"):
             ap.error("--xf needs --label xf-<bench>")

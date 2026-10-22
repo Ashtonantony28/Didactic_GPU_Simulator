@@ -1,41 +1,36 @@
 # ADR-009 — MeDiC memory-divergence correction (Phase 9)
 
 ## Status
-Implemented; classification revised in SG19 (below). `src/l1d_cache.sv` provides a real
-direct-mapped L1-D with per-lane hit/miss tracking; MeDiC bypass and controller priority
-arbitration are wired and parameterized. Functionally working — the
-opportunity to see MeDiC's *value* depends on inter-warp heterogeneity
-which our single-warp datapath can't yet produce; see "What MeDiC
-needs" below.
+Implemented; classification revised in SG19 (below). `src/l1d_cache.sv` is a direct-mapped,
+write-through L1-D shared by every LSU of the GPU (`DCACHE_LINES`); with `MEDIC=1` it classifies each
+LSU lane, bypasses low-utility lanes, and the data controller serves high-utility lanes first.
 
 ## Context
 
-[Ausavarungnirun et al., "Exploiting Inter-Warp Heterogeneity to Improve
-GPGPU Performance" (MeDiC)](https://arxiv.org/abs/1804.11038) reports
-~21.8% speedup and ~20.1% energy improvement by:
+[Ausavarungnirun et al., "Exploiting Inter-Warp Heterogeneity to Improve GPGPU Performance" (MeDiC)](https://arxiv.org/abs/1804.11038)
+reports about 21.8% speedup from:
 
-1. **Online warp characterization** — track hit / miss ratio per warp.
-2. **Cache bypassing for low-utility warps** — warps that miss too often
-   are forced to bypass the L1-D, freeing capacity for the high-utility
-   warps.
-3. **Memory controller priority** — high-utility warp requests jump the
-   memory queue.
+1. **Online warp characterization**: track each warp's hit ratio.
+2. **Cache bypassing for low-utility warps**: warps that mostly miss skip the L1-D, leaving its
+   capacity to the others.
+3. **Memory controller priority**: high-utility warps' requests go first.
 
 ## Decision
+The three mechanisms are applied per L1-D consumer, i.e. per LSU lane (`NUM_CORES ×
+THREADS_PER_BLOCK` of them), not per warp: the L1-D sits between the LSUs and the data controller and
+sees lanes, and at `WARPS_PER_CORE > 1` a lane's LSU belongs to one thread.
 
-MeDiC's three components depend on:
+### Characterization
+Each lane keeps a 4-lookup hit/miss window; it is high-utility while at least `MEDIC_THRESHOLD = 2` of
+its last 4 lookups hit (`warp_high_utility`, `warp_low_utility` outputs).
 
-- An L1-D cache (which we don't have yet).
-- Multiple warps per core (Phase 8).
+### Bypass
+On a miss by a low-utility lane the fill goes to the lane without installing the line (the install is
+gated). Writes are write-through for every lane.
 
-We document the design and leave the implementation as a follow-on once
-Phase 8 lands.
-
-## Component 1 — Warp characterization
-
-Per warp, maintain a 4-bit shift register of recent hit/miss outcomes.
-`hit_count = popcount(window)`; classify the warp as `high` (≥ threshold)
-or `low` (< threshold) utility.
+### Priority
+The controller (`PRIORITY_ENABLE = MEDIC`) runs two claim passes over its consumers each cycle:
+high-utility lanes first, then the rest.
 
 ### Revision (SG19): lanes start high-utility
 
@@ -56,44 +51,24 @@ Alternatives rejected: a separate warm-up counter (same effect as the all-hits r
 threshold 3 (one miss in a lane's first two lookups would bypass it); threshold 1 (streaming lanes
 pollute the cache for 3 fills, and a lane is demoted only by 4 straight misses).
 
-Consequences: at `MEDIC=0` nothing changes (the window feeds only `MEDIC`-gated logic; regression
-and `test_l1d_indepth` cycle-identical at default and `DCACHE_LINES=16`). At `MEDIC=1` every kernel
-test now matches plain `DCACHE_LINES=16` (conv1d 10 / 8, hot address 8 / 4). `make test_medic`
-runs a mixed workload at `MEDIC=0` then `MEDIC=1`: the streaming lanes install 2 lines each and
-bypass the rest, the hot lanes hit 18 / 28 against 14 / 28, and a monitor fails the run if a
-bypassed fill leaves a line behind or a low-utility lane gets a channel while a high-utility lane
-waits. With one warp per core, priority only decides when the two cores' requests overlap; the test
-slows data memory (`MEM_LATENCY + 4`) relative to program memory to make them overlap.
+## Tests
+- `make test_l1d_indepth PARAMS="-Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC=1"`: the hot-address case hits with
+  exact counts.
+- `make test_medic` (`test/test_medic.py`) runs a mixed workload (hot and streaming lanes in one
+  launch) at `MEDIC=0` then `MEDIC=1`: streaming lanes install 2 lines each and bypass the rest, hot
+  lanes hit at least as often as at `MEDIC=0`, and a monitor fails the run if a bypassed fill leaves a
+  line behind or a low-utility lane gets a channel while a high-utility lane waits. Data memory runs
+  4 cycles slower than program memory so the two cores' requests overlap and priority has to decide.
 
-## Component 2 — Cache bypass
+## Results
+From `bench/phase-11-all.json` (`docs/final-report.md` cites the rows):
+- On the eight regression kernels `MEDIC=1` equals plain `DCACHE_LINES=16` in cycles and counts: no
+  lane demotes.
+- On the mixed workload, hot lanes hit 18 / 28 against 14 / 28, data requests drop from 98 to 94, and
+  cycles drop by 3–4 at every latency. The cycle gain is small because a one-warp block waits for its
+  slowest lane, a streaming lane that misses either way.
 
-L1-D lookup logic adds an extra input: `warp_class`. If `class == low`,
-the cache passes the request through to main memory without updating LRU
-or installing the line in the cache. Implementation: gate the
-"install_on_miss" signal.
-
-## Component 3 — Memory controller priority
-
-The controller's arbitration loop scans consumers from index 0
-upward. Add a priority queue: high-utility requests jump ahead of
-low-utility ones. Implementation: two parallel scan passes over the
-consumer list.
-
-## Test plan
-- All Phase 5 kernels must still pass.
-- New kernel: deliberately memory-divergent (some warps thrashing, others
-  cache-friendly).
-- Bench report: L1-D hit-rate per warp; cycle count vs. no-MeDiC baseline.
-
-## What MeDiC needs to *help* (rather than just *run*)
-
-MeDiC's three mechanisms — characterization, bypass, priority — all
-target *inter-warp heterogeneity*. With a single warp per core, every
-lane sees the same instruction stream and similar memory behavior. The
-mechanisms still run correctly (you can observe the bypass kick in
-when a lane gets classified low-utility), but the *benefit* is zero
-because there's no competing high-utility traffic to favor.
-
-Wiring multi-warp-per-core (ADR-008's open work) unlocks MeDiC's win.
-The L1-D + MeDiC machinery is in place; the workload to exploit it
-isn't yet.
+## Consequences
+- At `MEDIC=0` the window feeds only `MEDIC`-gated logic, so the L1-D behaves as a plain cache.
+- Phase 9's results for `MEDIC=1` (conv1d 0 hits / 18 misses, 335 cycles, in `bench/phase-9-medic.json`)
+  are the pre-SG19 cache-off behaviour, kept as history.

@@ -1,10 +1,10 @@
 # tiny-gpu-extended
 
 Replication of [adam-maj/tiny-gpu](https://github.com/adam-maj/tiny-gpu)
-extended with bench harness, parameterised instruction cache, memory
-coalescing, divergent-kernel verification, and design specs for shared
-memory, a pluggable warp scheduler, and MeDiC memory-divergence
-correction.
+extended with a bench harness, instruction cache, pipelined decode, memory
+coalescing, shared memory with barriers, an L1-D with MeDiC memory-divergence
+correction, a multi-warp core with a pluggable warp scheduler, a SIMT stack,
+and int8 transformer kernels on a 32-bit build.
 
 See [`docs/final-report.md`](docs/final-report.md) for results,
 [`docs/architecture.md`](docs/architecture.md) for the design, and
@@ -21,7 +21,7 @@ make test_matadd
 make test_matmul
 make regression                # exits non-zero on any failure
 NANOGPT_DIR=... make test_all  # every test module at default params, xf pytest, export --check
-make -j4 matrix                # kernel and xf tests under 10 configurations
+make -j4 matrix                # kernel and xf tests under 13 configurations
 python3 bench/run.py --phase 5 --label phase-5-coalesce \
     --params "ICACHE_LINES=16 COALESCE=1"
 ```

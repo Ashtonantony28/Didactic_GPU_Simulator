@@ -36,6 +36,10 @@ def test_vector_dot_kernel_matches_test():
     assert assemble((ROOT / "kernels" / "vector_dot.asm").read_text()) == LEGACY["test_vector_dot.module"]
 
 
+def test_tiled_matmul_kernel_matches_test():
+    assert assemble((ROOT / "kernels" / "tiled_matmul.asm").read_text()) == LEGACY["test_tiled_matmul.build_program"]
+
+
 def test_disassemble_round_trip():
     for words in LEGACY.values():
         assert assemble("\n".join(disassemble(words))) == words

@@ -1,115 +1,113 @@
 # Architecture
 
-This document describes the tiny-gpu-extended design from first principles.
-It mirrors the upstream architecture and adds the Phase 3+ extensions, all
-gated by parameters so the Phase 1 baseline is the default.
+tiny-gpu-extended keeps upstream tiny-gpu's structure (dispatcher, cores, memory controllers) and adds
+the Phase 3+ and Round 3 extensions, each gated by a `gpu` parameter whose default gives the Phase 1
+baseline. Measured effects are in [final-report.md](final-report.md).
 
 ## Block diagram
 
 ```
-                                  ┌──────────────────┐
-                                  │     dispatch     │
-                                  │  block scheduler │
-                                  └────────┬─────────┘
-                                           │ core_start / core_reset
-                                           │ core_block_id / core_thread_count
-                              ┌────────────┴────────────┐
-                              ▼                         ▼
-                       ┌────────────┐            ┌────────────┐
-                       │   core 0   │            │   core 1   │
-                       │ ┌────────┐ │            │ ┌────────┐ │
-                       │ │ sched  │ │            │ │ sched  │ │
-                       │ └───┬────┘ │            │ └───┬────┘ │
-                       │ ┌───▼────┐ │            │ ┌───▼────┐ │
-                       │ │fetcher │ │            │ │fetcher │ │
-                       │ │+icache │ │            │ │+icache │ │
-                       │ └───┬────┘ │            │ └───┬────┘ │
-                       │ ┌───▼────┐ │            │ ┌───▼────┐ │
-                       │ │decoder │ │            │ │decoder │ │
-                       │ └───┬────┘ │            │ └───┬────┘ │
-                       │     │      │            │     │      │
-                       │  THREADS_PER_BLOCK lanes │  THREADS_PER_BLOCK lanes
-                       │ ┌──┴──┬──┬─┐ │            │ ┌──┴──┬──┬─┐ │
-                       │ │ ALU │RF│PC│            │ │ ALU │RF│PC│
-                       │ │ LSU │  │  │            │ │ LSU │  │  │
-                       │ └─────┴──┴──┘            │ └─────┴──┴──┘
-                       └──────┬───────┘            └──────┬───────┘
-                              │                           │
-                              ▼                           ▼
-                          ┌────────────────────────────────┐
-                          │    data memory controller       │
-                          │ (NUM_CHANNELS, optional COALESCE)│
-                          └────────────────┬───────────────┘
-                                           ▼
-                                    External Data Memory
-
-                          ┌────────────────────────────────┐
-                          │  program memory controller      │
-                          └────────────────┬───────────────┘
-                                           ▼
-                                  External Program Memory
+                         ┌──────────────────────────┐
+                         │ dispatch (blocks → cores)│   dcr: thread_count
+                         └────────────┬─────────────┘
+                 core_start / core_reset / block_id / thread_count
+               ┌──────────────────────┴──────────────────────┐
+               ▼                                             ▼
+   ┌───────────────────────────┐                 ┌───────────────────────────┐
+   │ core 0                    │   ...  NUM_CORES │ core N-1                  │
+   │  warp_scheduler (W > 1)   │                 │                           │
+   │  scheduler FSM, per-warp  │                 │                           │
+   │   PC (+ simt_stack)       │                 │                           │
+   │  fetcher (+ I-cache)      │                 │                           │
+   │  decoder                  │                 │                           │
+   │  LANES = TPB / W  ALUs    │                 │                           │
+   │  TPB × {regs, pc/NZP, LSU}│                 │                           │
+   │  shared_memory (64 words) │                 │                           │
+   └─────┬──────────────┬──────┘                 └─────┬──────────────┬──────┘
+         │ fetch        │ TPB LSUs                     │              │
+         │              ▼                              │              ▼
+         │   ┌─────────────────────────────────────────────────────────────┐
+         │   │ l1d_cache (DCACHE_LINES > 0; MEDIC bypass)                    │
+         │   └──────────────────────────────┬──────────────────────────────┘
+         │   ┌──────────────────────────────▼──────────────────────────────┐
+         │   │ data controller: DATA_MEM_NUM_CHANNELS channels, COALESCE,    │
+         │   │ MEDIC priority                                                │
+         │   └──────────────────────────────┬──────────────────────────────┘
+         ▼                                  ▼
+   program controller (1 channel)     external data memory
+         ▼
+   external program memory
 ```
+
+`TPB` = `THREADS_PER_BLOCK`, `W` = `WARPS_PER_CORE`.
 
 ## Modules
 
-| Module        | File                  | Role                                                                 |
-|---------------|-----------------------|----------------------------------------------------------------------|
-| `gpu`         | `src/gpu.sv`          | Top-level: wires dispatcher, controllers, cores onto external memory |
-| `dispatch`    | `src/dispatch.sv`     | Issues blocks of `THREADS_PER_BLOCK` threads to free cores           |
-| `dcr`         | `src/dcr.sv`          | Device Control Register — stores the kernel-wide `thread_count`      |
-| `controller`  | `src/controller.sv`   | Bridges NUM_CONSUMERS LSUs/fetchers onto NUM_CHANNELS memory ports   |
-| `core`        | `src/core.sv`         | One block at a time; instantiates lanes + scheduler                  |
-| `scheduler`   | `src/scheduler.sv`    | 6-state FSM driving the block's control flow                         |
-| `fetcher`     | `src/fetcher.sv`      | Fetches instructions; optional I-cache                               |
-| `decoder`     | `src/decoder.sv`      | Maps a 16-bit instruction to control signals                         |
-| `alu`         | `src/alu.sv`          | Per-thread ALU                                                       |
-| `lsu`         | `src/lsu.sv`          | Per-thread load/store unit (async with REQUESTING/WAITING/DONE)      |
-| `registers`   | `src/registers.sv`    | Per-thread 16-entry register file (R0..R12 free, R13/R14/R15 RO)     |
-| `pc`          | `src/pc.sv`           | Per-thread next-PC and NZP register                                  |
+| Module | File | Role |
+|---|---|---|
+| `gpu` | `src/gpu.sv` | Top level: dispatcher, cores, L1-D, controllers, telemetry |
+| `dispatch` | `src/dispatch.sv` | Hands blocks of `THREADS_PER_BLOCK` threads to free cores |
+| `dcr` | `src/dcr.sv` | Device control register: the kernel's `thread_count` |
+| `controller` | `src/controller.sv` | Arbitrates consumers onto memory channels; coalescing, priority, request counters |
+| `l1d_cache` | `src/l1d_cache.sv` | Direct-mapped, write-through L1-D shared by all LSUs; MeDiC classification and bypass |
+| `core` | `src/core.sv` | One block at a time, as `WARPS_PER_CORE` warps |
+| `scheduler` | `src/scheduler.sv` | Control FSM and per-warp PCs; issue slot, yield, `BAR` |
+| `warp_scheduler` | `src/warp_scheduler.sv` | Picks the issuing warp (LRR / GTO / GTLRR) when `WARPS_PER_CORE > 1` |
+| `simt_stack` | `src/simt_stack.sv` | Per-warp reconvergence stack and lane mask when `SIMT_STACK = 1` |
+| `fetcher` | `src/fetcher.sv` | Instruction fetch; I-cache when `ICACHE_LINES > 0` |
+| `decoder` | `src/decoder.sv` | Combinational decode of a 16-bit instruction |
+| `alu` | `src/alu.sv` | `LANES` per core, shared by the warps |
+| `lsu` | `src/lsu.sv` | One per thread: global and shared loads and stores |
+| `registers` | `src/registers.sv` | One per thread: 16 registers (R13–R15 read-only `%blockIdx`, `%blockDim`, `%threadIdx`) |
+| `pc` | `src/pc.sv` | One per thread: NZP and branch outcome |
+| `shared_memory` | `src/shared_memory.sv` | Per-core SMEM, 64 words, one read and one write port per lane |
 
 ## Control flow
 
-A block executes in lockstep. The scheduler cycles through:
+The scheduler steps one instruction at a time through FETCH, DECODE, REQUEST, WAIT, EXECUTE, UPDATE.
+`PIPELINED = 1` skips DECODE (the decoder is combinational). REQUEST starts LSU operations, WAIT holds
+until they finish, EXECUTE computes ALU results and next PCs, UPDATE writes registers and NZP and
+advances the PC, or ends the warp on `RET`.
 
-1. **IDLE** — wait for `start`.
-2. **FETCH** — drive `current_pc` to the fetcher; wait for `fetcher_state==FETCHED`.
-3. **DECODE** — decoder produces control signals.
-4. **REQUEST** — register file produces `rs`/`rt`; LSUs leave IDLE if mem op.
-5. **WAIT** — block until all LSUs are out of REQUESTING/WAITING.
-6. **EXECUTE** — ALU computes; PC computes next.
-7. **UPDATE** — register file writeback, NZP latch, PC advance, or `RET → DONE`.
-
-Loop back to FETCH unless `RET`.
-
-`scheduler.sv` picks the next PC from lane 0 (always enabled). Upstream picks
-lane `THREADS_PER_BLOCK-1`, which can hang on the last block if it has fewer
-threads — see [ADR-001](decisions/ADR-001-deviations.md).
+- **`WARPS_PER_CORE = 1`**: UPDATE goes straight back to FETCH; the block is one warp in lockstep.
+- **`WARPS_PER_CORE > 1`** (ADR-014): IDLE is the issue slot where `warp_scheduler` picks a ready warp;
+  UPDATE returns to IDLE. A warp whose global load or store is still in flight in WAIT yields the core
+  and re-issues the instruction once its LSUs are done. A warp at `BAR` waits until every live warp of
+  the block is at a `BAR`.
+- **Branches**: without the SIMT stack a warp follows its lowest thread's next PC, so branches must be
+  uniform within a warp (ADR-001, AUDIT-4 M1). With `SIMT_STACK = 1` the stack supplies the next PC and
+  the lane mask (ADR-011, ADR-015).
 
 ## Memory model
 
-- **Program memory** — 8-bit address, 16-bit data, read-only, 1 channel.
-- **Data memory**    — 8-bit address, 8-bit data, R/W, 4 channels by default.
+| Memory | Address bits | Data bits | Channels | Access |
+|---|---|---|---|---|
+| Program | `PROGRAM_MEM_ADDR_BITS` = 8 | 16 | `PROGRAM_MEM_NUM_CHANNELS` = 1 | read |
+| Data, default build | `DATA_MEM_ADDR_BITS` = 8 | `DATA_MEM_DATA_BITS` = `WORD_BITS` = 8 | `DATA_MEM_NUM_CHANNELS` = 4 | read/write |
+| Data, transformer build | 12 | 32 | 4 | read/write |
+| Shared (per core) | register, masked to 6 bits | `WORD_BITS` | one port per lane | read/write |
 
-The data memory controller multiplexes `NUM_LSUS = NUM_CORES * THREADS_PER_BLOCK`
-consumers onto `DATA_MEM_NUM_CHANNELS` external channels. With `COALESCE=1`
-sequential reads to the same address are merged into a single transaction whose
-response broadcasts to every coalesced consumer.
+`DATA_MEM_DATA_BITS` must equal `WORD_BITS` (ADR-010). The data controller serves
+`NUM_CORES × THREADS_PER_BLOCK` LSUs (through the L1-D when present) on its channels; each channel takes
+a different consumer in the same cycle (ADR-013). With `COALESCE = 1` reads of one address share one
+transaction. With `MEDIC = 1` high-utility lanes are claimed first. The program controller serves one
+fetcher per core.
 
-## ISA summary
+## ISA
 
-11 instructions, 16-bit fixed width. See [docs/isa.md](isa.md) for full
-details. Opcode in bits [15:12]; the remaining fields depend on the
-instruction (`rd[11:8] rs[7:4] rt[3:0]`, or `imm[7:0]`, or `nzp[11:9] imm[7:0]`
-for `BRnzp`).
+16 opcodes, 16-bit fixed width, `SYNC` encoded as `BR` with `nzp = 000`. See [isa.md](isa.md).
 
 ## Telemetry
 
-The GPU exposes counters consumed by `bench/run.py`:
+| Output | Meaning |
+|---|---|
+| `data_mem_requests` | downstream data transactions |
+| `data_mem_requests_coalesced` | consumer reads served by another consumer's transaction |
+| `icache_hits_total`, `icache_misses_total` | summed over all cores |
+| `dcache_hits_total`, `dcache_misses_total` | L1-D lookups |
+| `warp_issues_total` | instructions issued, all warps and cores (equals `xf.isasim` steps) |
+| `bar_stall_cycles_total` | cycles warps wait at `BAR` |
 
-- `data_mem_requests` — total transactions issued on data memory.
-- `data_mem_requests_coalesced` — number of consumer requests merged into
-  another's transaction by the coalescer.
-- `icache_hits_total`, `icache_misses_total` — summed across cores.
-
-Telemetry counters live on the **global** clock domain and reset only on
-the top-level `reset`, not on per-block `core_reset`. See [ADR-003](decisions/ADR-003-telemetry-reset.md).
+Exact definitions are in ADR-012; `test/helpers/runner.py::check_counters` checks the request and
+I-cache counters on every kernel run. Counters reset with the GPU, not the per-block core reset
+([ADR-003](decisions/ADR-003-telemetry-reset.md)).

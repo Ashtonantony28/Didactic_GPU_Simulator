@@ -64,6 +64,8 @@ python3 bench/run.py --phase 3 \
     --label phase-3-icache --params "ICACHE_LINES=16"
 python3 bench/run.py --phase 5 \
     --label phase-5-coalesce --params "ICACHE_LINES=16 COALESCE=1"
+python3 bench/run.py --phase 11 --label phase-11-all   # latency / multi-warp / SIMT / MeDiC sweep
+python3 bench/run.py --check-citations                 # docs/final-report.md cites existing bench rows
 ```
 
 ## Parameter switches
@@ -76,12 +78,16 @@ default. Pass them via `iverilog -Pgpu.NAME=VALUE`:
 | `ICACHE_LINES`  | 3     | `0`     | Per-core direct-mapped I-cache when > 0         |
 | `PIPELINED`     | 4     | `0`     | Combinational decode + skip DECODE state        |
 | `COALESCE`      | 5     | `0`     | Coalesce same-address reads in data memory      |
-| `SMEM_SIZE`     | 7     | `64`    | Per-block shared memory entries                 |
 | `DCACHE_LINES`  | 9     | `0`     | L1-D cache (per-gpu, shared lines, write-through) |
 | `MEDIC`         | 9     | `0`     | MeDiC bypass + priority on top of L1-D          |
 | `NUM_CORES`     | —     | `2`     | Number of compute cores                         |
 | `WORD_BITS`     | xf    | `8`     | Register/ALU/SMEM width; must equal `DATA_MEM_DATA_BITS` (ADR-010) |
-| `THREADS_PER_BLOCK` | — | `4`     | Threads per block (lockstep within a core)      |
+| `THREADS_PER_BLOCK` | — | `4`     | Threads per block                               |
+| `WARPS_PER_CORE` | SG20 | `1`    | Warps per block, time-sharing the core's lanes (ADR-014) |
+| `WARP_POLICY`   | SG20  | `0`     | 0 LRR, 1 GTO, 2 GTLRR when `WARPS_PER_CORE > 1` |
+| `SIMT_STACK`    | SG21  | `0`     | Per-warp SIMT stack; `SYNC` marks reconvergence (ADR-015) |
+
+Shared memory is 64 words per core (`core.SMEM_SIZE`); it is not a `gpu` parameter.
 | `WARPS_PER_CORE` | SG20 | `1`    | Warps per block, sharing `THREADS_PER_BLOCK / WARPS_PER_CORE` lanes (ADR-012, ADR-014) |
 | `WARP_POLICY`   | SG20  | `0`     | Warp scheduler: 0 LRR, 1 GTO, 2 GTLRR (`make test_multiwarp`) |
 | `SIMT_STACK`    | SG21  | `0`     | Per-warp SIMT stack (8 entries): `SYNC` + divergent `BR` split and reconverge (ADR-011, ADR-015; `make test_divergence`) |

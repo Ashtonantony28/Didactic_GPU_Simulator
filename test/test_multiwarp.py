@@ -41,6 +41,8 @@ stage:
     STR R8, R7
     RET
 """
+# ORDER, AGES and LONG load a[i] and store to n + i (n = threads), so blocks on different cores never touch
+# each other's words (the model runs blocks one after another).
 # A straight ALU prefix (no stalls), one load, then more ALU: shows each policy's issue order.
 ORDER = """
     CONST R1, #1
@@ -53,7 +55,7 @@ ORDER = """
     ADD R0, R0, %threadIdx
     LDR R7, R0
     ADD R7, R7, R6
-    CONST R8, #8
+    CONST R8, #{n}
     ADD R8, R8, R0
     STR R8, R7
     RET
@@ -71,7 +73,7 @@ spin:
     ADD R0, R0, %threadIdx
     LDR R4, R0
     ADD R4, R4, R1
-    CONST R5, #8
+    CONST R5, #{n}
     ADD R5, R5, R0
     STR R5, R4
     LDR R6, R5
@@ -92,7 +94,7 @@ spin:
     ADD R0, R0, %threadIdx
     LDR R4, R0
     ADD R4, R4, R3
-    CONST R5, #8
+    CONST R5, #{n}
     ADD R5, R5, R0
     STR R5, R4
     RET
@@ -245,7 +247,7 @@ async def test_policy_order(dut):
     and the reference of warp_scheduler.sv reproduces it slot by slot."""
     warps, policy, cores = params(dut)
     threads = cores * int(dut.THREADS_PER_BLOCK.value)
-    _, tr = await check_against_model(dut, ORDER, list(range(threads)), threads)
+    _, tr = await check_against_model(dut, ORDER.format(n=threads), list(range(threads)), threads)
     for c, slots in enumerate(tr.issues):
         hist = [w for w, _, _ in slots]
         assert len(hist) >= 14 * warps, f"core {c}: {len(hist)} issue slots"
@@ -268,7 +270,7 @@ async def test_policy_ages(dut):
     if warps == 1:
         return
     threads = cores * int(dut.THREADS_PER_BLOCK.value)
-    _, tr = await check_against_model(dut, AGES, list(range(threads)), threads)
+    _, tr = await check_against_model(dut, AGES.format(n=threads), list(range(threads)), threads)
     differ = reference_order(tr, warps, policy)
     assert differ or warps == 2, "GTO and GTLRR agree on every slot: the trace does not tell them apart"
 
@@ -279,7 +281,7 @@ async def test_age_saturation(dut):
     ages with <, so an age of 255 would never be picked) and follows the reference."""
     warps, policy, cores = params(dut)
     threads = cores * int(dut.THREADS_PER_BLOCK.value)
-    _, tr = await check_against_model(dut, LONG, list(range(threads)), threads)
+    _, tr = await check_against_model(dut, LONG.format(n=threads), list(range(threads)), threads)
     if warps > 1:
         reference_order(tr, warps, policy)
 

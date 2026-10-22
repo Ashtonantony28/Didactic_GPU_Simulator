@@ -2,8 +2,9 @@
 `timescale 1ns/1ns
 
 // Compute Core
-// One block at a time. One fetcher/decoder/scheduler shared across THREADS_PER_BLOCK
-// ALU/LSU/registers/PC lanes. Per-block shared memory (Phase 7) is instantiated here.
+// One block at a time. One fetcher/decoder/scheduler shared across THREADS_PER_BLOCK threads, split into
+// WARPS_PER_CORE warps of LANES consecutive threads (ADR-012, ADR-014). Each thread has its own registers,
+// NZP/PC and LSU; the LANES ALUs are time-shared by the warps. Per-block shared memory (Phase 7) is here.
 module core #(
     parameter DATA_MEM_ADDR_BITS    = 8,
     parameter DATA_MEM_DATA_BITS    = 8,
@@ -13,7 +14,9 @@ module core #(
     parameter THREADS_PER_BLOCK     = 4,
     parameter ICACHE_LINES          = 0,
     parameter SMEM_SIZE             = 64,
-    parameter PIPELINED             = 0
+    parameter PIPELINED             = 0,
+    parameter WARPS_PER_CORE        = 1,
+    parameter WARP_POLICY           = 0
 ) (
     input  wire                              clk,
     input  wire                              reset,
@@ -39,8 +42,12 @@ module core #(
     input  wire [THREADS_PER_BLOCK-1:0]      data_mem_write_ready,
 
     output wire [31:0]                       icache_hits,
-    output wire [31:0]                       icache_misses
+    output wire [31:0]                       icache_misses,
+    output wire [31:0]                       warp_issues,
+    output wire [31:0]                       bar_stall_cycles
 );
+    localparam LANES = THREADS_PER_BLOCK / WARPS_PER_CORE;
+
     wire [2:0]  core_state;
     wire [2:0]  fetcher_state;
     wire [15:0] instruction;
@@ -51,7 +58,8 @@ module core #(
     wire [WORD_BITS-1:0] rt      [THREADS_PER_BLOCK-1:0];
     wire [1:0]  lsu_state [THREADS_PER_BLOCK-1:0];
     wire [WORD_BITS-1:0] lsu_out [THREADS_PER_BLOCK-1:0];
-    wire [WORD_BITS-1:0] alu_out [THREADS_PER_BLOCK-1:0];
+    wire [WORD_BITS-1:0] alu_out [LANES-1:0];
+    wire [$clog2(WARPS_PER_CORE+1)-1:0] current_warp;
 
     wire [3:0]  decoded_rd_address, decoded_rs_address, decoded_rt_address;
     wire [2:0]  decoded_nzp;
@@ -112,9 +120,12 @@ module core #(
 
     scheduler #(
         .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
-        .PIPELINED(PIPELINED)
+        .PIPELINED(PIPELINED),
+        .WARPS_PER_CORE(WARPS_PER_CORE),
+        .WARP_POLICY(WARP_POLICY)
     ) scheduler_instance (
-        .clk(clk), .reset(reset), .start(start),
+        .clk(clk), .reset(reset), .telemetry_reset(telemetry_reset), .start(start),
+        .thread_count(thread_count),
         .decoded_mem_read_enable(decoded_mem_read_enable),
         .decoded_mem_write_enable(decoded_mem_write_enable),
         .decoded_smem_read_enable(decoded_smem_read_enable),
@@ -124,7 +135,10 @@ module core #(
         .fetcher_state(fetcher_state),
         .lsu_state(lsu_state),
         .current_pc(current_pc), .next_pc(next_pc),
-        .core_state(core_state), .done(done)
+        .core_state(core_state), .done(done),
+        .current_warp(current_warp),
+        .warp_issues(warp_issues),
+        .bar_stall_cycles(bar_stall_cycles)
     );
 
     shared_memory #(
@@ -142,28 +156,66 @@ module core #(
         .lane_write_data(smem_write_data)
     );
 
+    wire [3:0] decoded_mem_op = {decoded_mem_read_enable, decoded_mem_write_enable,
+                                 decoded_smem_read_enable, decoded_smem_write_enable};
+
     genvar i;
     generate
+        for (i = 0; i < LANES; i = i + 1) begin : lanes
+            if (WARPS_PER_CORE == 1) begin : one_warp
+                alu #(.WORD_BITS(WORD_BITS)) alu_instance (
+                    .clk(clk), .reset(reset), .enable(i < thread_count),
+                    .core_state(core_state),
+                    .decoded_alu_arithmetic_mux(decoded_alu_arithmetic_mux),
+                    .decoded_alu_output_mux(decoded_alu_output_mux),
+                    .rs(rs[i]), .rt(rt[i]),
+                    .alu_out(alu_out[i])
+                );
+            end else begin : warps
+                wire [7:0] t = current_warp * LANES + i;
+                alu #(.WORD_BITS(WORD_BITS)) alu_instance (
+                    .clk(clk), .reset(reset), .enable(t < thread_count),
+                    .core_state(core_state),
+                    .decoded_alu_arithmetic_mux(decoded_alu_arithmetic_mux),
+                    .decoded_alu_output_mux(decoded_alu_output_mux),
+                    .rs(rs[t]), .rt(rt[t]),
+                    .alu_out(alu_out[i])
+                );
+            end
+        end
+
         for (i = 0; i < THREADS_PER_BLOCK; i = i + 1) begin : threads
-            alu #(.WORD_BITS(WORD_BITS)) alu_instance (
-                .clk(clk), .reset(reset), .enable(i < thread_count),
-                .core_state(core_state),
-                .decoded_alu_arithmetic_mux(decoded_alu_arithmetic_mux),
-                .decoded_alu_output_mux(decoded_alu_output_mux),
-                .rs(rs[i]), .rt(rt[i]),
-                .alu_out(alu_out[i])
-            );
+            // At several warps a thread is active only while its warp issues; its LSU sees the core only then
+            // and keeps the memory operation it was issued (ADR-014).
+            wire       active;
+            wire [2:0] lsu_core_state;
+            wire [3:0] mem_op;
+            if (WARPS_PER_CORE == 1) begin : one_warp
+                assign active         = i < thread_count;
+                assign lsu_core_state = core_state;
+                assign mem_op         = decoded_mem_op;
+            end else begin : warps
+                wire      issuing    = current_warp == i / LANES;
+                wire      requesting = issuing && core_state == 3'b011;
+                reg [3:0] issued_op;
+                always @(posedge clk)
+                    if (reset) issued_op <= 0;
+                    else if (requesting) issued_op <= decoded_mem_op;
+                assign active         = i < thread_count && issuing;
+                assign lsu_core_state = issuing ? core_state : 3'b000;
+                assign mem_op         = requesting ? decoded_mem_op : issued_op;
+            end
 
             lsu #(
                 .WORD_BITS(WORD_BITS),
                 .ADDR_BITS(DATA_MEM_ADDR_BITS)
             ) lsu_instance (
                 .clk(clk), .reset(reset), .enable(i < thread_count),
-                .core_state(core_state),
-                .decoded_mem_read_enable(decoded_mem_read_enable),
-                .decoded_mem_write_enable(decoded_mem_write_enable),
-                .decoded_smem_read_enable(decoded_smem_read_enable),
-                .decoded_smem_write_enable(decoded_smem_write_enable),
+                .core_state(lsu_core_state),
+                .decoded_mem_read_enable(mem_op[3]),
+                .decoded_mem_write_enable(mem_op[2]),
+                .decoded_smem_read_enable(mem_op[1]),
+                .decoded_smem_write_enable(mem_op[0]),
                 .rs(rs[i]), .rt(rt[i]),
                 .mem_read_valid(data_mem_read_valid[i]),
                 .mem_read_address(data_mem_read_address[i]),
@@ -188,7 +240,7 @@ module core #(
                 .THREAD_ID(i),
                 .WORD_BITS(WORD_BITS)
             ) register_instance (
-                .clk(clk), .reset(reset), .enable(i < thread_count),
+                .clk(clk), .reset(reset), .enable(active),
                 .block_id(block_id),
                 .core_state(core_state),
                 .decoded_reg_write_enable(decoded_reg_write_enable),
@@ -197,7 +249,7 @@ module core #(
                 .decoded_rs_address(decoded_rs_address),
                 .decoded_rt_address(decoded_rt_address),
                 .decoded_immediate(decoded_immediate),
-                .alu_out(alu_out[i]),
+                .alu_out(alu_out[i % LANES]),
                 .lsu_out(lsu_out[i]),
                 .rs(rs[i]), .rt(rt[i])
             );
@@ -206,13 +258,13 @@ module core #(
                 .WORD_BITS(WORD_BITS),
                 .PROGRAM_MEM_ADDR_BITS(PROGRAM_MEM_ADDR_BITS)
             ) pc_instance (
-                .clk(clk), .reset(reset), .enable(i < thread_count),
+                .clk(clk), .reset(reset), .enable(active),
                 .core_state(core_state),
                 .decoded_nzp(decoded_nzp),
                 .decoded_immediate(decoded_immediate),
                 .decoded_nzp_write_enable(decoded_nzp_write_enable),
                 .decoded_pc_mux(decoded_pc_mux),
-                .alu_out(alu_out[i]),
+                .alu_out(alu_out[i % LANES]),
                 .current_pc(current_pc),
                 .next_pc(next_pc[i])
             );

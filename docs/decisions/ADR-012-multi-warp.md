@@ -2,6 +2,7 @@
 
 ## Status
 Accepted (PLAN SG17, contract 12). Interface only; the RTL is SG20, the counter fixes SG18.
+Implemented in SG20; implementation choices in ADR-014.
 
 ## Context
 A core runs one block as one warp, so `BAR` is a no-op, the warp scheduler (ADR-008) has nothing
@@ -22,6 +23,14 @@ to schedule and MeDiC (ADR-009) sees no inter-warp heterogeneity.
   - `data_mem_requests` = downstream data transactions.
   - `data_mem_requests_coalesced` = consumer requests served by another consumer's transaction.
   - `icache_hits_total` / `icache_misses_total` = sums over all `NUM_CORES`.
+  - `warp_issues_total` = instructions issued, summed over all warps and cores: each instruction a
+    warp starts counts once, `RET` and `BAR` included, and an instruction that yields and re-issues
+    (ADR-014) still counts once. It equals `xf.isasim`'s `steps` for the same launch.
+  - `bar_stall_cycles_total` = summed over all warps and cores, the cycles a warp is held at a `BAR`:
+    from the cycle after its `BAR` completes up to, not including, the cycle the barrier releases
+    (the first cycle in which every unfinished warp of the block is at a `BAR`). The last warp to
+    arrive adds 0; it is always 0 at `WARPS_PER_CORE = 1`.
+  - All counters reset with the GPU, not with the per-block core reset.
 
 ## Alternatives rejected
 - Several resident blocks per core: hides latency, but `BAR` stays meaningless and SMEM would

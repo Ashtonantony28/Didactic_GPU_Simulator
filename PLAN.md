@@ -33,7 +33,7 @@ thread and go back to the user.
 | SG17 | Round 3 shared interfaces: ISA model, trace fixtures, multi-warp and SYNC contracts | SG15 | SG17 shared interfaces | DONE | [#27](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/27) |
 | SG18 | Controller: parallel channels, exact telemetry | SG17 | SG18 controller fix | DONE | [#28](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/28) |
 | SG19 | MeDiC that can install and hit | SG18 | SG19 MeDiC fix | DONE | [#30](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/30) |
-| SG20 | Multi-warp core, warp scheduler wired, real BAR | SG17, SG18 | — | TODO | — |
+| SG20 | Multi-warp core, warp scheduler wired, real BAR | SG17, SG18 | SG20 multi-warp core | DONE | [#31](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/31) |
 | SG21 | SIMT-stack control divergence | SG20 | — | TODO | — |
 | SG22 | Kernel and binder robustness (AUDIT-4, AUDIT-8) | SG17 | SG22 kernel and binder robustness | DONE | [#29](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/29) |
 | SG23 | Benchmarks under latency and multi-warp; docs refresh | SG19, SG20, SG21 | — | TODO | — |

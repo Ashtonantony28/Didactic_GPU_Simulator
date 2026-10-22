@@ -59,6 +59,8 @@ def in_flight(trace, kind):
 async def test_distinct_channels(dut):
     """8 threads, distinct addresses: every channel busy with a different consumer, nothing issued twice."""
     channels = len(dut.data_mem_read_ready)
+    warps = int(dut.WARPS_PER_CORE.value)
+    lanes = int(dut.THREADS_PER_BLOCK.value) // warps
     data = [(7 * i + 3) & 0xFF for i in range(N)]
     metrics, dm, trace = await probe(dut, COPY.format(n=N), data, N)
     logger.info(f"distinct-address probe: {metrics['cycles']} cycles")
@@ -69,7 +71,10 @@ async def test_distinct_channels(dut):
         dup = [c for c, a in enumerate(cycles) if len(a) != len(set(a))]
         assert not dup, f"{len(dup)} cycles with duplicate {name} transactions, first {dup[0]}: {cycles[dup[0]]}"
         most = max(len(set(a)) for a in cycles)
-        assert most == channels, f"at most {most} distinct {name} addresses in flight, expected {channels}"
+        if warps == 1:
+            assert most == channels, f"at most {most} distinct {name} addresses in flight, expected {channels}"
+        else:   # a warp issues only its lanes' loads at once (ADR-014)
+            assert most >= min(channels, lanes), f"at most {most} distinct {name} addresses in flight, {lanes} lanes"
         served = sorted(a for _, a in (dm.reads if kind == 0 else dm.writes))
         assert served == list(want), f"{name} transactions {served}, expected each of {list(want)} once"
     assert metrics["data_mem_requests"] == 2 * N, metrics

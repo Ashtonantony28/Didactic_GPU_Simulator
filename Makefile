@@ -1,5 +1,5 @@
 # tiny-gpu-extended Makefile
-.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf test_all require_nanogpt matrix matrix_run clean bench bench_clean harness_selftest
+.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf test_all require_nanogpt matrix matrix_run clean bench bench_clean harness_selftest test_multiwarp multiwarp_%
 
 SRC := $(wildcard src/*.sv)
 
@@ -61,6 +61,21 @@ test_medic: compile
 	export MEDIC_BASELINE=$(BUILD)/medic0/medic.json; $(call cocotb,test.test_medic,$(BUILD)/medic0/sim.vvp)
 	export MEDIC_BASELINE=$(BUILD)/medic0/medic.json; $(call cocotb,test.test_medic,$(BUILD)/sim.vvp)
 
+# Multi-warp core (SG20): WARPS_PER_CORE=4 under each WARP_POLICY, and WARPS_PER_CORE=2, each in $(BUILD)/<cfg>.
+MW_w4_lrr   := -Pgpu.WARPS_PER_CORE=4 -Pgpu.WARP_POLICY=0
+MW_w4_gto   := -Pgpu.WARPS_PER_CORE=4 -Pgpu.WARP_POLICY=1
+MW_w4_gtlrr := -Pgpu.WARPS_PER_CORE=4 -Pgpu.WARP_POLICY=2
+MW_w2_lrr   := -Pgpu.WARPS_PER_CORE=2 -Pgpu.WARP_POLICY=0
+
+test_multiwarp: $(addprefix multiwarp_,w4_lrr w4_gto w4_gtlrr w2_lrr)
+
+multiwarp_%:
+	@$(MAKE) --no-print-directory BUILD=$(BUILD)/$* PARAMS="$(MW_$*) $(PARAMS)" compile >/dev/null
+	$(MAKE) --no-print-directory BUILD=$(BUILD)/$* multiwarp_run
+
+multiwarp_run:
+	$(call cocotb,test.test_multiwarp,$(BUILD)/sim.vvp)
+
 test_xf_%: compile_xf
 	$(call cocotb,test.test_xf_$*,$(BUILD)/sim_xf.vvp)
 
@@ -101,7 +116,7 @@ require_nanogpt:
 # regression, regression_xf, test_l1d_indepth, test_isa_diff, test_controller and every test_xf_* per configuration, each in build/matrix/<cfg>;
 # test_medic too where MEDIC=1.
 # `make -j4 matrix` runs configurations in parallel.
-MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency
+MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency warps2 warps4gto
 CFG_icache    := -Pgpu.ICACHE_LINES=16
 CFG_pipelined := -Pgpu.PIPELINED=1
 CFG_coalesce  := -Pgpu.COALESCE=1
@@ -111,18 +126,22 @@ CFG_all       := $(CFG_icache) $(CFG_pipelined) $(CFG_coalesce) $(CFG_medic)
 CFG_cores1    := -Pgpu.NUM_CORES=1
 CFG_cores4    := -Pgpu.NUM_CORES=4
 ENV_latency   := MEM_LATENCY=3
+CFG_warps2    := -Pgpu.WARPS_PER_CORE=2
+CFG_warps4gto := -Pgpu.WARPS_PER_CORE=4 -Pgpu.WARP_POLICY=1
+# W=4 runs about 4x the cycles; skip the long attention/MLP chains to keep `make -j4 matrix` within budget.
+XF_warps4gto  := $(filter-out test_xf_attention test_xf_mlp_block test_xf_bench,$(XF_TESTS))
 
 matrix: $(addprefix matrix_,$(MATRIX))
 	@echo "matrix: OK"
 
 matrix_%:
 	@mkdir -p build/matrix/$*
-	@$(ENV_$*) $(MAKE) --no-print-directory BUILD=build/matrix/$* PARAMS="$(CFG_$*)" matrix_run > build/matrix/$*/log.txt 2>&1 \
+	@$(ENV_$*) $(MAKE) --no-print-directory BUILD=build/matrix/$* PARAMS="$(CFG_$*)" MATRIX_XF="$(XF_$*)" matrix_run > build/matrix/$*/log.txt 2>&1 \
 	  && echo "matrix $*: OK" || { tail -n 30 build/matrix/$*/log.txt; echo "matrix $*: FAILED (build/matrix/$*/log.txt)"; exit 1; }
 
 matrix_run: compile compile_xf
-	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff controller))
-	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)) $(XF_TESTS))
+	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff controller multiwarp))
+	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)) $(or $(MATRIX_XF),$(XF_TESTS)))
 	@$(if $(findstring MEDIC=1,$(PARAMS)),$(MAKE) --no-print-directory test_medic)
 
 # A failing test, a module with no tests and a missing module must each fail the target.

@@ -5,6 +5,7 @@
 // One block at a time. One fetcher/decoder/scheduler shared across THREADS_PER_BLOCK threads, split into
 // WARPS_PER_CORE warps of LANES consecutive threads (ADR-012, ADR-014). Each thread has its own registers,
 // NZP/PC and LSU; the LANES ALUs are time-shared by the warps. Per-block shared memory (Phase 7) is here.
+// SIMT_STACK=1 gives each warp a reconvergence stack whose top mask gates its lanes (ADR-011, ADR-015).
 module core #(
     parameter DATA_MEM_ADDR_BITS    = 8,
     parameter DATA_MEM_DATA_BITS    = 8,
@@ -16,7 +17,8 @@ module core #(
     parameter SMEM_SIZE             = 64,
     parameter PIPELINED             = 0,
     parameter WARPS_PER_CORE        = 1,
-    parameter WARP_POLICY           = 0
+    parameter WARP_POLICY           = 0,
+    parameter SIMT_STACK            = 0
 ) (
     input  wire                              clk,
     input  wire                              reset,
@@ -71,6 +73,10 @@ module core #(
     wire        decoded_alu_output_mux, decoded_pc_mux, decoded_ret;
     wire        decoded_smem_read_enable, decoded_smem_write_enable, decoded_bar;
 
+    wire [THREADS_PER_BLOCK-1:0] lane_taken, lane_on;
+    wire [7:0]  simt_next_pc;
+    wire        simt_done;
+
     // Shared memory wires
     wire [THREADS_PER_BLOCK-1:0] smem_read_enable_v;
     wire [THREADS_PER_BLOCK-1:0] smem_write_enable_v;
@@ -122,7 +128,8 @@ module core #(
         .THREADS_PER_BLOCK(THREADS_PER_BLOCK),
         .PIPELINED(PIPELINED),
         .WARPS_PER_CORE(WARPS_PER_CORE),
-        .WARP_POLICY(WARP_POLICY)
+        .WARP_POLICY(WARP_POLICY),
+        .SIMT_STACK(SIMT_STACK)
     ) scheduler_instance (
         .clk(clk), .reset(reset), .telemetry_reset(telemetry_reset), .start(start),
         .thread_count(thread_count),
@@ -135,6 +142,7 @@ module core #(
         .fetcher_state(fetcher_state),
         .lsu_state(lsu_state),
         .current_pc(current_pc), .next_pc(next_pc),
+        .simt_next_pc(simt_next_pc), .simt_done(simt_done),
         .core_state(core_state), .done(done),
         .current_warp(current_warp),
         .warp_issues(warp_issues),
@@ -161,6 +169,37 @@ module core #(
 
     genvar i;
     generate
+        if (SIMT_STACK != 0) begin : simt
+            wire [7:0]                stack_pc   [WARPS_PER_CORE-1:0];
+            wire [WARPS_PER_CORE-1:0] stack_done;
+            for (i = 0; i < WARPS_PER_CORE; i = i + 1) begin : warp
+                wire [LANES-1:0] exists;
+                genvar l;
+                for (l = 0; l < LANES; l = l + 1) begin : lane
+                    assign exists[l] = i * LANES + l < thread_count;
+                end
+                simt_stack #(.LANES(LANES), .DEPTH(8)) stack_instance (
+                    .clk(clk), .reset(reset),
+                    .update(core_state == 3'b110 && current_warp == i),
+                    .exists(exists),
+                    .branch(decoded_pc_mux && decoded_nzp != 3'b000),
+                    .sync(decoded_pc_mux && decoded_nzp == 3'b000),
+                    .ret(decoded_ret),
+                    .immediate(decoded_immediate),
+                    .taken(lane_taken[i * LANES +: LANES]),
+                    .mask(lane_on[i * LANES +: LANES]),
+                    .next_pc(stack_pc[i]),
+                    .next_done(stack_done[i])
+                );
+            end
+            assign simt_next_pc = stack_pc[current_warp];
+            assign simt_done    = stack_done[current_warp];
+        end else begin : no_simt
+            assign lane_on      = {THREADS_PER_BLOCK{1'b1}};
+            assign simt_next_pc = 0;
+            assign simt_done    = 1'b0;
+        end
+
         for (i = 0; i < LANES; i = i + 1) begin : lanes
             if (WARPS_PER_CORE == 1) begin : one_warp
                 alu #(.WORD_BITS(WORD_BITS)) alu_instance (
@@ -191,8 +230,8 @@ module core #(
             wire [2:0] lsu_core_state;
             wire [3:0] mem_op;
             if (WARPS_PER_CORE == 1) begin : one_warp
-                assign active         = i < thread_count;
-                assign lsu_core_state = core_state;
+                assign active         = i < thread_count && lane_on[i];
+                assign lsu_core_state = lane_on[i] ? core_state : 3'b000;
                 assign mem_op         = decoded_mem_op;
             end else begin : warps
                 wire      issuing    = current_warp == i / LANES;
@@ -201,8 +240,8 @@ module core #(
                 always @(posedge clk)
                     if (reset) issued_op <= 0;
                     else if (requesting) issued_op <= decoded_mem_op;
-                assign active         = i < thread_count && issuing;
-                assign lsu_core_state = issuing ? core_state : 3'b000;
+                assign active         = i < thread_count && issuing && lane_on[i];
+                assign lsu_core_state = issuing && lane_on[i] ? core_state : 3'b000;
                 assign mem_op         = requesting ? decoded_mem_op : issued_op;
             end
 
@@ -266,7 +305,8 @@ module core #(
                 .decoded_pc_mux(decoded_pc_mux),
                 .alu_out(alu_out[i % LANES]),
                 .current_pc(current_pc),
-                .next_pc(next_pc[i])
+                .next_pc(next_pc[i]),
+                .taken(lane_taken[i])
             );
         end
     endgenerate

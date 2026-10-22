@@ -1,8 +1,8 @@
 """RTL vs xf.isasim: every 8-bit ISA fixture (test/fixtures/isa) must leave data memory bit-identical.
 
-The model runs with the DUT's WARPS_PER_CORE. At WARPS_PER_CORE > 1 the RTL interleaves warps differently from
-the model, so a fixture is compared only if the model gives the same memory and steps under "lrr" and "gto"
-(ADR-012); isa_diff_skipped logs the others. warp_issues_total must equal the model's steps.
+The model runs with the DUT's WARPS_PER_CORE, and with simt=True at SIMT_STACK=1. At WARPS_PER_CORE > 1 the RTL
+interleaves warps differently from the model, so a fixture is compared only if the model gives the same memory and
+steps under "lrr" and "gto" (ADR-012); isa_diff_skipped logs the others. warp_issues_total must equal the model's steps.
 """
 from enum import Enum
 
@@ -14,15 +14,16 @@ from .helpers.logger import logger
 from .helpers.runner import data_bus, run_kernel
 
 
-def model(fx, warps, policy="lrr"):
-    return run(fx["program"], fx["data"], fx["threads"], **fx["params"], warps_per_core=warps, warp_policy=policy)
+def model(fx, warps, simt, policy="lrr"):
+    return run(fx["program"], fx["data"], fx["threads"], **fx["params"], warps_per_core=warps, simt=simt,
+               warp_policy=policy)
 
 
-def expected(fx, warps):
+def expected(fx, warps, simt=False):
     """The model's Result if it does not depend on the warp interleaving, else None."""
-    r = model(fx, warps)
+    r = model(fx, warps, simt)
     if warps > 1:
-        g = model(fx, warps, "gto")
+        g = model(fx, warps, simt, "gto")
         if (r.memory, r.steps) != (g.memory, g.steps):
             return None
     return r
@@ -31,9 +32,10 @@ def expected(fx, warps):
 def diff_test(word_bits):
     top = getattr(cocotb, "top", None)  # None when imported outside a simulation (xf/tests)
     warps = int(top.WARPS_PER_CORE.value) if top is not None else 1
+    simt = top is not None and bool(int(top.SIMT_STACK.value))
     fixtures = {p.stem: load(p) for p in sorted(FIXTURE_DIR.glob("*.json"))}
     fixtures = {k: fx for k, fx in fixtures.items() if fx["params"]["word_bits"] == word_bits}
-    want = {k: expected(fx, warps) for k, fx in fixtures.items()}
+    want = {k: expected(fx, warps, simt) for k, fx in fixtures.items()}
     skipped = sorted(k for k, r in want.items() if r is None)
     # An Enum so cocotb names each test after its fixture (it numbers long strings).
     cases = Enum("Case", [(k,) * 2 for k in sorted(want) if want[k] is not None])

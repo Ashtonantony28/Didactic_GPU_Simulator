@@ -1,5 +1,5 @@
 # tiny-gpu-extended Makefile
-.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf test_all require_nanogpt matrix matrix_run clean bench bench_clean harness_selftest test_multiwarp multiwarp_%
+.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf test_all require_nanogpt matrix matrix_run clean bench bench_clean harness_selftest test_multiwarp multiwarp_% test_divergence divergence_run simt_fatal_run
 
 SRC := $(wildcard src/*.sv)
 
@@ -76,6 +76,39 @@ multiwarp_%:
 multiwarp_run:
 	$(call cocotb,test.test_multiwarp,$(BUILD)/sim.vvp)
 
+# SIMT stack (SG21): test_divergence with the stack at WARPS_PER_CORE 1, 2, 4, NUM_CORES 1, 2, 4 and 8-lane warps, and
+# with it off, each in $(BUILD)/<cfg>; then the runs of test/simt_fatal.py must end in simt_stack's $fatal.
+DV_w1      := -Pgpu.SIMT_STACK=1
+DV_w1c1    := -Pgpu.SIMT_STACK=1 -Pgpu.NUM_CORES=1
+DV_w2c4    := -Pgpu.SIMT_STACK=1 -Pgpu.WARPS_PER_CORE=2 -Pgpu.NUM_CORES=4
+DV_w4c1gto := -Pgpu.SIMT_STACK=1 -Pgpu.WARPS_PER_CORE=4 -Pgpu.NUM_CORES=1 -Pgpu.WARP_POLICY=1
+DV_w4c4    := -Pgpu.SIMT_STACK=1 -Pgpu.WARPS_PER_CORE=4 -Pgpu.NUM_CORES=4
+DV_t8      := -Pgpu.SIMT_STACK=1 -Pgpu.THREADS_PER_BLOCK=8
+DV_t8w2    := -Pgpu.SIMT_STACK=1 -Pgpu.THREADS_PER_BLOCK=8 -Pgpu.WARPS_PER_CORE=2
+DV_off     :=
+DV_offw2   := -Pgpu.WARPS_PER_CORE=2
+DV_CFGS    := w1 w1c1 w2c4 w4c1gto w4c4 t8 t8w2 off offw2
+
+test_divergence: $(addprefix divergence_,$(DV_CFGS)) simt_fatal_overflow simt_fatal_nosync
+
+divergence_%:
+	@$(MAKE) --no-print-directory BUILD=$(BUILD)/$* PARAMS="$(DV_$*) $(PARAMS)" compile >/dev/null
+	$(MAKE) --no-print-directory BUILD=$(BUILD)/$* divergence_run
+
+divergence_run:
+	$(call cocotb,test.test_divergence,$(BUILD)/sim.vvp)
+
+simt_fatal_overflow: divergence_t8
+	@$(MAKE) --no-print-directory BUILD=$(BUILD)/t8 SIMT_FATAL=overflow FATAL_MSG="deeper than 8" simt_fatal_run
+
+simt_fatal_nosync: divergence_w1
+	@$(MAKE) --no-print-directory BUILD=$(BUILD)/w1 SIMT_FATAL=nosync FATAL_MSG="without SYNC" simt_fatal_run
+
+simt_fatal_run:
+	@export SIMT_FATAL=$(SIMT_FATAL); ! ($(call cocotb,test.simt_fatal,$(BUILD)/sim.vvp)) > $(BUILD)/fatal_$(SIMT_FATAL).log 2>&1 \
+	  && grep -q "msg: simt_stack: .*$(FATAL_MSG)" $(BUILD)/fatal_$(SIMT_FATAL).log && echo "simt_fatal $(SIMT_FATAL): OK" \
+	  || { tail -n 20 $(BUILD)/fatal_$(SIMT_FATAL).log; echo "simt_fatal $(SIMT_FATAL): FAILED"; exit 1; }
+
 test_xf_%: compile_xf
 	$(call cocotb,test.test_xf_$*,$(BUILD)/sim_xf.vvp)
 
@@ -113,10 +146,11 @@ require_nanogpt:
 	@python3 -c "import torch" 2>/dev/null && test -n "$$NANOGPT_DIR" \
 	  || { echo "test_all needs torch and NANOGPT_DIR (a nanoGPT Extended checkout @ 03dbab8)"; exit 1; }
 
-# regression, regression_xf, test_l1d_indepth, test_isa_diff, test_controller and every test_xf_* per configuration, each in build/matrix/<cfg>;
+# regression, regression_xf, test_l1d_indepth, test_isa_diff, test_controller, test_multiwarp (test_divergence for simt) and every test_xf_* per
+# configuration, each in build/matrix/<cfg>;
 # test_medic too where MEDIC=1.
 # `make -j4 matrix` runs configurations in parallel.
-MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency warps2 warps4gto
+MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency warps2 warps4gto simt
 CFG_icache    := -Pgpu.ICACHE_LINES=16
 CFG_pipelined := -Pgpu.PIPELINED=1
 CFG_coalesce  := -Pgpu.COALESCE=1
@@ -130,17 +164,22 @@ CFG_warps2    := -Pgpu.WARPS_PER_CORE=2
 CFG_warps4gto := -Pgpu.WARPS_PER_CORE=4 -Pgpu.WARP_POLICY=1
 # W=4 runs about 4x the cycles; skip the long attention/MLP chains to keep `make -j4 matrix` within budget.
 XF_warps4gto  := $(filter-out test_xf_attention test_xf_mlp_block test_xf_bench,$(XF_TESTS))
+# The stack on: test_multiwarp's kernels branch divergently without SYNC, so test_divergence replaces it; xf kernels are
+# block-uniform (same cycles as default), so the long chains are skipped too.
+CFG_simt      := -Pgpu.SIMT_STACK=1
+T8_simt       := divergence
+XF_simt       := $(XF_warps4gto)
 
 matrix: $(addprefix matrix_,$(MATRIX))
 	@echo "matrix: OK"
 
 matrix_%:
 	@mkdir -p build/matrix/$*
-	@$(ENV_$*) $(MAKE) --no-print-directory BUILD=build/matrix/$* PARAMS="$(CFG_$*)" MATRIX_XF="$(XF_$*)" matrix_run > build/matrix/$*/log.txt 2>&1 \
+	@$(ENV_$*) $(MAKE) --no-print-directory BUILD=build/matrix/$* PARAMS="$(CFG_$*)" MATRIX_XF="$(XF_$*)" MATRIX_T8="$(T8_$*)" matrix_run > build/matrix/$*/log.txt 2>&1 \
 	  && echo "matrix $*: OK" || { tail -n 30 build/matrix/$*/log.txt; echo "matrix $*: FAILED (build/matrix/$*/log.txt)"; exit 1; }
 
 matrix_run: compile compile_xf
-	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff controller multiwarp))
+	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff controller $(or $(MATRIX_T8),multiwarp)))
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)) $(or $(MATRIX_XF),$(XF_TESTS)))
 	@$(if $(findstring MEDIC=1,$(PARAMS)),$(MAKE) --no-print-directory test_medic)
 

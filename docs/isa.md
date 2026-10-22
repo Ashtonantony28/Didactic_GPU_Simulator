@@ -53,13 +53,17 @@ address, `LDS`/`STS` the low 8.
 | `1001`  | CONST    | `rd ← imm`                                                      |
 | `1101`  | SRA      | `rd ← rs >>> rt`  (signed `rs`, unsigned `rt`; `rt ≥ WORD_BITS` fills with the sign) |
 | `1110`  | MAX      | `rd ← max(rs, rt)`  (signed)                                    |
-| `1111`  | RET      | finish current block                                            |
+| `1111`  | RET      | finish current block (with the SIMT stack: the active lanes)    |
 
 ## Branches and SYNC
 
-Every thread evaluates `BRnzp` with its own NZP, but the block (warp) has one PC: the next PC is
-thread 0's target. Branch conditions must therefore be uniform across the block; a disagreeing
-thread silently follows thread 0 (AUDIT-4 M1).
+Every thread evaluates `BRnzp` with its own NZP, but the block (warp) has one PC. By default
+(`SIMT_STACK = 0`) the next PC is the warp's lowest thread's target, so branch conditions must be
+uniform across the warp; a disagreeing thread silently follows it (AUDIT-4 M1). With
+`SIMT_STACK = 1` each warp has an 8-entry SIMT stack: a divergent branch runs the taken lanes, then
+the others, under a lane mask and reconverges at the PC of the preceding `SYNC`; masked-off lanes
+read and write nothing. A divergent branch without a pending `SYNC`, or more than 8 pushed entries, stops
+the simulation (`$fatal`).
 
 | Encoding | Mnemonic | Semantics |
 |---|---|---|

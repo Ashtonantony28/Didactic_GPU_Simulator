@@ -37,6 +37,7 @@ thread and go back to the user.
 | SG21 | SIMT-stack control divergence | SG20 | SG21 SIMT stack | DONE | [#32](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/32) |
 | SG22 | Kernel and binder robustness (AUDIT-4, AUDIT-8) | SG17 | SG22 kernel and binder robustness | DONE | [#29](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/29) |
 | SG23 | Benchmarks under latency and multi-warp; docs refresh | SG19, SG20, SG21 | SG23 benchmarks and docs | DONE | [#34](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/34) |
+| SG24 | AUDIT-12 H1–H3: gate coalescing, I-cache counts and STS lane order | SG23 | SG24 coverage gaps | TODO | |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -629,6 +630,16 @@ to match the code.
 Accept: reproducible numbers (two runs equal); every claim in the final report points at a bench row;
 AUDIT-4 L2's stale-doc list is empty.
 Verify: `python3 bench/run.py --phase 11 --label phase-11-all` twice, identical JSON.
+
+### SG24 — AUDIT-12 coverage gaps
+H1: a test in `test_all` and the `coalesce`/`all` matrix configs where two lanes load `a` and `a + 256k`
+in the same cycle at 16-bit addresses. H2: exact `icache_hits_total`/`icache_misses_total` asserted for a
+fixed program. H3: `docs/isa.md` states that the highest lane wins an STS conflict (with an ADR), and an
+ISA fixture pins it in the RTL.
+
+Accept: AUDIT-12 mutants K08, I02, I04 and S02 are killed by `make test_all` or a matrix config;
+the H1–H3 xfails in `xf/tests/test_audit12.py` turn into passing tests.
+Verify: `NANOGPT_DIR=... make test_all`; `make -j4 matrix`; each mutant rerun from AUDIT-12.md fails.
 
 ### Round 3 audits
 After SG23, separate sessions that wrote none of the code, one lens each: **AUDIT-9 encoding

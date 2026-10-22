@@ -29,7 +29,7 @@ thread and go back to the user.
 | SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | SG13 attention input norm | DONE | [#20](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/20) |
 | SG14 | AUDIT-6 H1: attention scores precision | SG13 | SG14 attention TOL bound | DONE | [#25](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/25) |
 | SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | SG15: make the merge gate run the real tolerance checks | DONE | [#24](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/24) |
-| SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | — | TODO | — |
+| SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | SG16 segment checks | DONE | [#33](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/33) |
 | SG17 | Round 3 shared interfaces: ISA model, trace fixtures, multi-warp and SYNC contracts | SG15 | SG17 shared interfaces | DONE | [#27](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/27) |
 | SG18 | Controller: parallel channels, exact telemetry | SG17 | SG18 controller fix | DONE | [#28](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/28) |
 | SG19 | MeDiC that can install and hit | SG18 | SG19 MeDiC fix | DONE | [#30](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/30) |
@@ -211,6 +211,15 @@ All 23 cocotb tests (9 make targets) pass at default params with cocotb 2.0.1. `
    Gaussian/Laplace/Student-t inputs, asserted by `test_audit6.py`.
    Its scales are calibrated on 2^16 inputs: with the MLP's 4096, `k` and
    `v` saturate on held-out inputs and the worst error reaches 16.6 LSB.
+   Segment bounds (SG16, AUDIT-7 H2): on the 200k held-out inputs every golden segment of both
+   blocks keeps its least-squares gain `Σ(dequant·ref) / Σ(ref²)` within **±0.0025** of the value
+   measured at SG16 and its RMS error within **1.1×** of it (`export.SEGMENTS`, `GAIN_TOL`, `RMS_TOL`),
+   asserted by `export --check` and `test_audit7.py`. Reference: nanoGPT's float activation (`kT` is `k`
+   transposed, `p` the softmax, `scores` compared on causal entries only). Gain / RMS LSB at SG16:
+   MLP `h` 1.0021/0.298, `gate` 1.0024/0.409, `up` 1.0018/0.423, `act` 1.0045/0.369,
+   `down` 1.0037/0.753, `out` 1.0001/0.337; attention `h` 0.9997/0.290, `q` 1.0009/0.482,
+   `k` = `kT` 0.9998/0.454, `v` 0.9998/0.454, `scores` 0.9998/0.542, `p` 1.0000/0.318,
+   `o` 0.9964/0.443, `y` 0.9958/0.501.
 
 `xf/export.py` (SG3) layout of `test/fixtures/xf/mlp_block_<0-3>.json`:
 segments in allocation order `x, norm_w, rsqrt_lut[1024],

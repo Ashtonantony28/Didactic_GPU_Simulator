@@ -31,6 +31,16 @@ ACTS = ("x", "h", "gate", "up", "act", "down", "out")
 HEADROOM, HELDOUT_SEED, HELDOUT_N = 1.5, 12345, 200_000
 HELDOUT_TOL = ("mlp_block", "attention")
 OUTLIER = np.r_[1, 1, 1, 1, 1, 4, 1, 1]
+# (least-squares gain, RMS error in LSB) of each golden segment on the held-out inputs at SG16; check allows
+# |gain - HEAD| <= GAIN_TOL and RMS <= HEAD * RMS_TOL (AUDIT-7 H2, contract 8)
+GAIN_TOL, RMS_TOL = 0.0025, 1.1
+SEGMENTS = {
+    "mlp_block": {"h": (1.0021, 0.298), "gate": (1.0024, 0.409), "up": (1.0018, 0.423), "act": (1.0045, 0.369),
+                  "down": (1.0037, 0.753), "out": (1.0001, 0.337)},
+    "attention": {"h": (0.9997, 0.290), "q": (1.0009, 0.482), "k": (0.9998, 0.454), "v": (0.9998, 0.454),
+                  "kT": (0.9998, 0.454), "scores": (0.9998, 0.542), "p": (1.0000, 0.318), "o": (0.9964, 0.443),
+                  "y": (0.9958, 0.501)},
+}
 
 
 def fixed_point(ms, bounds, k=0):
@@ -228,10 +238,12 @@ def float_attention(blk, x):
         q, k, v = attn.c_attn(h).split(attn.n_embd, dim=-1)
         causal = torch.ones(T, T, dtype=torch.bool).tril()
         scores = q @ k.transpose(-2, -1) / math.sqrt(attn.head_dim)
-        o = F.softmax(scores.masked_fill(~causal, float("-inf")), dim=-1) @ v
+        p = F.softmax(scores.masked_fill(~causal, float("-inf")), dim=-1)
+        o = p @ v
         y = attn.c_proj(o)
         assert torch.allclose(y, attn(blk.ln_1(x.reshape(-1, T, N_EMBD))).reshape(y.shape), rtol=0, atol=1e-12)
-        a = {"x": x, "h": h, "q": q, "k": k, "v": v, "scores": scores.masked_fill(~causal, 0), "o": o, "y": y}
+        a = {"x": x, "h": h, "q": q, "k": k, "v": v, "kT": k.transpose(-2, -1), "scores": scores.masked_fill(~causal, 0),
+             "p": p, "o": o, "y": y}
         return {k: v.numpy() for k, v in a.items()}
 
 
@@ -271,8 +283,30 @@ def fixture_bytes(nanogpt_dir, tmp, block):
     return img, cases, worst, files
 
 
+def segment_stats(img, got, ref):
+    """{segment: (least-squares gain, RMS error in LSB)} of each golden segment against its float activation;
+    scores only where causal (the float reference zeroes the rest)."""
+    causal = np.tril(np.ones((T, T), dtype=bool))
+    stats = {}
+    for k, g in got.items():
+        s = img.segments[k]["scale"]
+        q, r = g * s, ref[k]
+        if k == "scores":
+            q, r = q[..., causal], r[..., causal]
+        stats[k] = (float((q * r).sum() / (r * r).sum()), float(np.sqrt(((q - r) ** 2).mean())) / s)
+    return stats
+
+
+def segment_errors(block, stats):
+    """Segments whose held-out gain or RMS error leaves SEGMENTS' bounds (contract 8)."""
+    assert set(stats) == set(SEGMENTS[block]), f"{block}: segments {sorted(stats)}, bounds for {sorted(SEGMENTS[block])}"
+    return {k: f"gain {g:.4f} (HEAD {g0}), RMS {r:.3f} LSB (HEAD {r0})" for k, (g, r) in stats.items()
+            for g0, r0 in [SEGMENTS[block][k]] if abs(g - g0) > GAIN_TOL or r > r0 * RMS_TOL}
+
+
 def heldout(nanogpt_dir, block, img, gain=1):
-    """-> per-input max error in output LSB, and each non-input float activation's peak in its own LSB.
+    """-> per-input max error in output LSB, each calibrated float activation's peak in its own LSB, and
+    segment_stats.
     `gain` scales the N(0,1) inputs per channel (OUTLIER: one channel x4, a non-Gaussian set)."""
     s = img.segments
     xq = quantize(np.random.default_rng(HELDOUT_SEED).standard_normal((HELDOUT_N, T, N_EMBD)) * gain, s["x"]["scale"])
@@ -282,7 +316,8 @@ def heldout(nanogpt_dir, block, img, gain=1):
     else:
         out, ref, got = "y", float_attention(blk, xq * s["x"]["scale"]), attention.attention_int(img, xq)
     err = np.abs(got[out] * s[out]["scale"] - ref[out]).max(axis=(1, 2)) / s[out]["scale"]
-    return err, {k: float(np.abs(v).max()) / s[k]["scale"] for k, v in ref.items() if k != "x"}
+    peak = {k: float(np.abs(v).max()) / s[k]["scale"] for k, v in ref.items() if k not in ("x", "p")}  # p: fixed 1/ONE
+    return err, peak, segment_stats(img, got, ref)
 
 
 def check(nanogpt_dir, block, a, b):
@@ -303,17 +338,20 @@ def check(nanogpt_dir, block, a, b):
         err = attention.row_sum_error(img.read("exp_lut"), int(img.read("one")[0]), T)
         assert err <= 1, f"softmax rows sum to one within {err} LSB, not 1"
     assert worst <= tol_lsb, f"{block}: max error {worst:.3f} LSB exceeds TOL {tol_lsb}"
-    err, peak = heldout(nanogpt_dir, block, img)
+    err, peak, stats = heldout(nanogpt_dir, block, img)
     assert max(peak.values()) <= 127.5, f"{block}: activations saturate on held-out inputs: {peak}"
     over = int((err > tol_lsb).sum())
     assert block not in HELDOUT_TOL or not over, f"{block}: {over} of {HELDOUT_N} held-out inputs exceed TOL, max {err.max():.3f} LSB"
-    out_err, out_peak = heldout(nanogpt_dir, block, img, OUTLIER)
+    bad = segment_errors(block, stats)
+    assert not bad, f"{block}: held-out segments off their float activations: {bad}"
+    out_err, out_peak, _ = heldout(nanogpt_dir, block, img, OUTLIER)
     assert max(out_peak.values()) <= 127.5 and out_err.max() <= tol_lsb, \
         f"{block}: outlier-channel inputs reach {out_err.max():.3f} LSB, peak {max(out_peak.values()):.1f}"
     print(f"ok {block}: deterministic, {len(img.words)}/{1 << 12} words, bounds {bounds}, "
           f"{len(cases)} inputs within TOL, max error {worst:.3f} LSB <= {tol_lsb} LSB "
           f"= {tol_lsb * img.segments[out]['scale']:.6f}; {HELDOUT_N} held-out: max error {err.max():.3f} LSB, "
-          f"{over} over TOL, peak activation {max(peak.values()):.1f} LSB; outlier channel: max error {out_err.max():.3f} LSB")
+          f"{over} over TOL, peak activation {max(peak.values()):.1f} LSB, {len(stats)} segments within gain and RMS bounds; "
+          f"outlier channel: max error {out_err.max():.3f} LSB")
 
 
 def main(argv=None):

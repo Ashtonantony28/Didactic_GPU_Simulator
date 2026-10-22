@@ -97,5 +97,5 @@ def test_export_matches_fixtures(nanogpt_dir, tmp_path, block):
 
 @pytest.mark.parametrize("block", export.BLOCKS)
 def test_heldout_activations_unsaturated(nanogpt_dir, block):
-    _, peak = export.heldout(nanogpt_dir, block, fixture.load(fixture.FIXTURE_DIR / f"{block}_0.json")["image"])
+    _, peak, _ = export.heldout(nanogpt_dir, block, fixture.load(fixture.FIXTURE_DIR / f"{block}_0.json")["image"])
     assert max(peak.values()) <= 127.5, f"{block}: activations saturate on held-out inputs: {peak}"

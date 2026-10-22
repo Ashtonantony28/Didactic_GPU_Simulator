@@ -29,7 +29,7 @@ thread and go back to the user.
 | SG13 | AUDIT-5 H1: ln_1 in front of attention | SG8, SG9 | SG13 attention input norm | DONE | [#20](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/20) |
 | SG14 | AUDIT-6 H1: attention scores precision | SG13 | SG14 attention TOL bound | DONE | [#25](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/25) |
 | SG15 | AUDIT-7 H1: torch-gated checks in the merge gate | SG12 | SG15: make the merge gate run the real tolerance checks | DONE | [#24](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/24) |
-| SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | — | TODO | — |
+| SG16 | AUDIT-7 H2: per-segment gain and RMS checks | SG13, SG14, SG15 | SG16 segment checks | DONE | [#33](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/33) |
 | SG17 | Round 3 shared interfaces: ISA model, trace fixtures, multi-warp and SYNC contracts | SG15 | SG17 shared interfaces | DONE | [#27](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/27) |
 | SG18 | Controller: parallel channels, exact telemetry | SG17 | SG18 controller fix | DONE | [#28](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/28) |
 | SG19 | MeDiC that can install and hit | SG18 | SG19 MeDiC fix | DONE | [#30](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/30) |

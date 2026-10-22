@@ -9,11 +9,13 @@
 // UPDATE returns to IDLE. A warp whose global load or store is still in flight in WAIT yields and re-issues
 // the same instruction once its LSUs are done; SMEM accesses (two cycles) do not yield. BAR holds a warp
 // until every unfinished warp has reached a BAR.
+// SIMT_STACK=1: the warp's next PC and its end come from its SIMT stack (simt_next_pc, simt_done; ADR-015).
 module scheduler #(
     parameter THREADS_PER_BLOCK = 4,
     parameter PIPELINED         = 0,
     parameter WARPS_PER_CORE    = 1,
-    parameter WARP_POLICY       = 0
+    parameter WARP_POLICY       = 0,
+    parameter SIMT_STACK        = 0
 ) (
     input  wire        clk,
     input  wire        reset,
@@ -30,6 +32,8 @@ module scheduler #(
     input  wire [1:0]  lsu_state [THREADS_PER_BLOCK-1:0],
     output reg  [7:0]  current_pc,
     input  wire [7:0]  next_pc [THREADS_PER_BLOCK-1:0],
+    input  wire [7:0]  simt_next_pc,
+    input  wire        simt_done,
     output reg  [2:0]  core_state,
     output reg         done,
     output reg  [$clog2(WARPS_PER_CORE+1)-1:0] current_warp,
@@ -51,6 +55,8 @@ module scheduler #(
 
     integer i;
     reg any_lsu_waiting;
+    wire [7:0] pc_after  = SIMT_STACK ? simt_next_pc : next_pc[(W == 1) ? 0 : current_warp * LANES];
+    wire       warp_ends = SIMT_STACK ? simt_done : decoded_ret;
 
     // Per-warp state, used when W > 1.
     reg  [7:0]    warp_pc  [W-1:0];
@@ -107,7 +113,7 @@ module scheduler #(
 
     // Telemetry (ADR-012): one issue per instruction a warp starts, and per cycle the warps held at a BAR.
     // Reset with the GPU, not with the per-block core reset.
-    wire issue = (W == 1) ? ((core_state == IDLE && start) || (core_state == UPDATE && !decoded_ret))
+    wire issue = (W == 1) ? ((core_state == IDLE && start) || (core_state == UPDATE && !warp_ends))
                           : (issue_valid && !warp_pending[selected_warp]);
     always @(posedge clk) begin
         if (telemetry_reset) begin
@@ -169,15 +175,15 @@ module scheduler #(
                 EXECUTE: core_state <= UPDATE;
                 UPDATE: begin
                     if (W > 1) begin
-                        warp_pc[current_warp] <= next_pc[current_warp * LANES];
-                        if (decoded_ret) warp_done[current_warp] <= 1'b1;
+                        warp_pc[current_warp] <= pc_after;
+                        if (warp_ends) warp_done[current_warp] <= 1'b1;
                         if (decoded_bar) warp_bar[current_warp]  <= 1'b1;
                         core_state <= IDLE;
-                    end else if (decoded_ret) begin
+                    end else if (warp_ends) begin
                         done       <= 1;
                         core_state <= DONE;
                     end else begin
-                        current_pc <= next_pc[0];
+                        current_pc <= pc_after;
                         core_state <= FETCH;
                     end
                 end

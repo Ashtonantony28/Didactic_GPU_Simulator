@@ -21,7 +21,8 @@ module gpu #(
     parameter DCACHE_LINES              = 0,
     parameter MEDIC                     = 0,
     parameter WARPS_PER_CORE            = 1,
-    parameter WARP_POLICY               = 0
+    parameter WARP_POLICY               = 0,
+    parameter SIMT_STACK                = 0
 ) (
     input  wire                              clk,
     input  wire                              reset,
@@ -294,7 +295,8 @@ module gpu #(
                 .ICACHE_LINES(ICACHE_LINES),
                 .PIPELINED(PIPELINED),
                 .WARPS_PER_CORE(WARPS_PER_CORE),
-                .WARP_POLICY(WARP_POLICY)
+                .WARP_POLICY(WARP_POLICY),
+                .SIMT_STACK(SIMT_STACK)
             ) core_instance (
                 .clk(clk),
                 .reset(core_reset[c]),

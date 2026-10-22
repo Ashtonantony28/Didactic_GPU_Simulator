@@ -1,7 +1,8 @@
 # ADR-011 — SYNC encoding and SIMT-stack semantics
 
 ## Status
-Accepted (PLAN SG17, contract 10). Encoding and reference semantics only; the RTL stack is SG21.
+Accepted (PLAN SG17, contract 10). Encoding and reference semantics; the RTL stack is SG21
+(`gpu.SIMT_STACK`, ADR-015).
 
 ## Context
 Branches resolve to lane 0's target (AUDIT-4 M1), so kernels must keep branches block-uniform.
@@ -15,7 +16,7 @@ it `SYNC target` and rejects a bare `BR` (AUDIT-4 L3). Kernels without `SYNC` ke
 
 With the stack enabled, each warp keeps entries `{pc, rpc, mask}`; the top runs under `mask`.
 - Uniform branch: move `top.pc`.
-- Divergent branch: needs a pending `R` (else error). Set `top.pc = R`, push
+- Divergent branch: needs a pending `R` (else error; `$fatal` in RTL). Set `top.pc = R`, push
   `{pc+1, R, not-taken}`, push `{imm, R, taken}`; the taken side runs first.
 - After every instruction, pop while a non-bottom `top.pc == top.rpc`.
 - Inactive lanes read and write nothing (registers, NZP, memory, SMEM).

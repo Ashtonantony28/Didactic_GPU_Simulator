@@ -17,11 +17,13 @@ module pc #(
     input  wire                              decoded_pc_mux,
     input  wire [WORD_BITS-1:0]              alu_out,
     input  wire [PROGRAM_MEM_ADDR_BITS-1:0]  current_pc,
-    output reg  [PROGRAM_MEM_ADDR_BITS-1:0]  next_pc
+    output reg  [PROGRAM_MEM_ADDR_BITS-1:0]  next_pc,
+    output wire                              taken
 );
     localparam [2:0] EXECUTE = 3'b101, UPDATE = 3'b110;
 
     reg [2:0] nzp;
+    assign taken = (nzp & decoded_nzp) != 3'b0;
 
     always @(posedge clk) begin
         if (reset) begin

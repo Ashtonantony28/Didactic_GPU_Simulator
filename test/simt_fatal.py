@@ -5,8 +5,9 @@ import os
 import cocotb
 
 from xf.asm import assemble
+from xf.tests.test_isasim import M1
 from .helpers.runner import run_kernel
-from .test_divergence import CAPPED_LOOP, M1
+from .test_divergence import CAPPED_LOOP
 
 PROGRAMS = {
     "overflow": (CAPPED_LOOP.format(cap=5), 8),   # 5 divergent exits at 8 lanes: 10 entries

@@ -9,7 +9,7 @@ import cocotb
 
 from xf.asm import assemble
 from xf.isasim import IsaSimError, run
-from xf.tests.test_isasim import LOOP, M1, NESTED
+from xf.tests import test_isasim as cases  # attributes read at test time: test_isasim imports test/ modules
 from .helpers.logger import logger
 from .helpers.runner import data_bus, run_kernel
 
@@ -83,7 +83,7 @@ async def check(dut, prog, data, threads, name):
 async def test_audit4_m1(dut):
     """AUDIT-4 M1: [1, 2, 2, 2] with the stack; without it a one-warp block follows thread 0 and stores 1s."""
     p = params(dut)
-    r = await check(dut, assemble(M1.format(sync="SYNC done")), [0] * 8, 4, "m1")
+    r = await check(dut, assemble(cases.M1.format(sync="SYNC done")), [0] * 8, 4, "m1")
     if p["simt"] or p["tpb"] // p["warps"] == 1:
         assert r.memory[:4] == [1, 2, 2, 2], r.memory[:4]
     elif p["warps"] == 1:
@@ -94,7 +94,7 @@ async def test_audit4_m1(dut):
 async def test_nested(dut):
     """Two levels of if/else inside one block."""
     p = params(dut)
-    r = await check(dut, assemble(NESTED), [], 4, "nested")
+    r = await check(dut, assemble(cases.NESTED), [], 4, "nested")
     if p["simt"]:
         assert r.memory[:4] == [91, 92, 110, 114], r.memory[:4]
 
@@ -102,7 +102,7 @@ async def test_nested(dut):
 @cocotb.test()
 async def test_loop_per_lane_trips(dut):
     """Lane t loops t + 1 times."""
-    r = await check(dut, assemble(LOOP), [], 4, "loop")
+    r = await check(dut, assemble(cases.LOOP), [], 4, "loop")
     if params(dut)["simt"]:
         assert r.memory[:4] == [1, 3, 6, 10], r.memory[:4]
 

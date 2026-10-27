@@ -38,6 +38,7 @@ thread and go back to the user.
 | SG22 | Kernel and binder robustness (AUDIT-4, AUDIT-8) | SG17 | SG22 kernel and binder robustness | DONE | [#29](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/29) |
 | SG23 | Benchmarks under latency and multi-warp; docs refresh | SG19, SG20, SG21 | SG23 benchmarks and docs | DONE | [#34](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/34) |
 | SG24 | AUDIT-12 H1–H3: gate coalescing, I-cache counts and STS lane order | SG23 | SG24 coverage gaps | DONE | [#39](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/39) |
+| SG25 | AUDIT-14 H1: global STR conflicts agree in model and RTL | SG24 | SG25 store conflicts | TODO | |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -640,6 +641,16 @@ ISA fixture pins it in the RTL.
 Accept: AUDIT-12 mutants K08, I02, I04 and S02 are killed by `make test_all` or a matrix config;
 the H1–H3 xfails in `xf/tests/test_audit12.py` turn into passing tests.
 Verify: `NANOGPT_DIR=... make test_all`; `make -j4 matrix`; each mutant rerun from AUDIT-12.md fails.
+
+### SG25 — AUDIT-14 store conflicts
+H1: when several lanes of one STR hit the same word, the RTL keeps the lowest lane of the last channel
+group while `xf.isasim` keeps the highest lane. Make them agree on "highest lane wins" (the model's and
+SG24's STS rule), state it in `docs/isa.md` with an ADR, and add ISA fixtures with STR conflicts. Also
+L1 (the lrr == gto interleaving check admits `sts_conflict*` at more than one warp) and L2 (the RET row).
+
+Accept: AUDIT-14 H1, L1 and L2 xfails pass; STR-conflict fixtures pass at 8 and 32 bits in every matrix
+config.
+Verify: `NANOGPT_DIR=... make test_all`; `make -j4 matrix`.
 
 ### Round 3 audits
 After SG23, separate sessions that wrote none of the code, one lens each: **AUDIT-9 encoding

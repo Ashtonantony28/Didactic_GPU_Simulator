@@ -24,6 +24,18 @@ WIDTHS = {8: 8, 32: 12}   # word_bits -> addr_bits
 CROSS_BLOCK = {"l1d_later_block8", "l1d_later_block32"}
 EDGE = {8: [0, 1, 7, 8, 9, 127, 128, 255], 32: [0, 31, 32, 33, 2**31 - 1, 2**31, 2**32 - 1]}
 OPS = ("ADD", "SUB", "MUL", "DIV", "SRA", "MAX", "CONST")
+# Every lane of a block stores its thread id to SMEM[0] in one STS; the highest lane wins (docs/isa.md). BAR makes the
+# result independent of the warp interleaving.
+STS_CONFLICT = """
+    MUL R2, %blockIdx, %blockDim
+    ADD R2, R2, %threadIdx
+    CONST R0, #0
+    STS R0, R2
+    BAR
+    LDS R1, R0
+    STR R2, R1
+    RET
+"""
 
 
 def straight_line(seed, w, threads=8, ops=44):
@@ -114,6 +126,7 @@ def cases():
     out = _kernel_cases()
     for w in WIDTHS:
         out.update({f"random{w}_{s}": (*straight_line(s, w), w) for s in range(8)})
+        out[f"sts_conflict{w}"] = (assemble(STS_CONFLICT), [], 8, w)
     out.update(_xf_cases())
     return out
 

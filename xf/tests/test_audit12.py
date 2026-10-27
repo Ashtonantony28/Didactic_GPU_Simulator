@@ -1,5 +1,5 @@
-"""AUDIT-12 repros (test coverage). Each xfail is strict at 44a396c and passes once the gap is closed; the
-controls pass and check that the helpers below can see what the xfails look for."""
+"""AUDIT-12 repros (test coverage). Each xfail is strict at 44a396c and passes once the gap is closed (H1-H3 closed in
+SG24); the controls pass and check that the helpers below can see what the xfails look for."""
 import re
 import types
 
@@ -71,7 +71,6 @@ def _controller_loads_above_byte():
     return False
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-12 H1: the coalescing test never runs at 12-bit addresses")
 def test_coalescing_probe_runs_at_xf_addresses():
     """K08 (coalesce on equal low address bytes) survives matrix_coalesce and matrix_all: test_controller runs only
     in the 8-bit suite, and no xf test has two lanes load a and a + 256k in the same cycle."""
@@ -88,7 +87,6 @@ ICACHE_EXACT = re.compile(r"""\[["']icache_(hits|misses)["']\]\s*==(?!\s*sum\()|
                           r"""icache_(hits|misses)_total\.value\)?\s*==""")
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-12 H2: no test checks an I-cache hit or miss count against a value")
 def test_icache_counts_are_asserted():
     """I02 (hits and misses swapped) and I04 (hits never counted) survive matrix_icache and matrix_all. The only checks
     are that the total equals the per-core sum (runner.check_counters, test_controller), which both mutants keep."""
@@ -101,7 +99,6 @@ def test_icache_counts_are_asserted():
 STS_LOOP = "                for a, v in [(regs[t][rs] & 0xFF & (smem_size - 1), regs[t][rt]) for t in lanes]:"
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-12 H3: no RTL differential case has two lanes STS one address")
 def test_isa_fixtures_pin_sts_lane_order():
     """S02 (lowest lane wins an STS conflict) survives every target. The model pins 'highest lane wins'
     (test_isasim::test_smem_highest_lane_wins), but no ISA fixture tells the two orders apart, so the RTL is never
@@ -151,7 +148,6 @@ def test_control_matrix_parsing():
     assert "controller" in _matrix_suite("sim.vvp")
     assert _var("CFG_coalesce") == "-Pgpu.COALESCE=1" and _var("CFG_icache") == "-Pgpu.ICACHE_LINES=16"
     assert "WARP_POLICY=1" in _var("CFG_warps4gto")
-    assert not _controller_loads_above_byte()
 
 
 def test_control_model_mutant_harness():
@@ -171,7 +167,9 @@ class _Sig:
 def test_control_check_counters_rejects_a_wrong_coalesced_count():
     """runner.check_counters (contract 12) rejects a coalesced count the controller handshakes do not support."""
     from test.helpers.runner import check_counters
-    dut = types.SimpleNamespace(per_core_icache_hits=_Sig(3 | 4 << 32, 64), per_core_icache_misses=_Sig(1 | 2 << 32, 64))
+    dut = types.SimpleNamespace(per_core_icache_hits=_Sig(3 | 4 << 32, 64), per_core_icache_misses=_Sig(1 | 2 << 32, 64),
+                                warp_issues_total=_Sig(10, 32), ICACHE_LINES=_Sig(16, 32),
+                                WARPS_PER_CORE=_Sig(1, 32))
     ok = dict(data_mem_requests=10, data_mem_requests_coalesced=2, icache_hits=7, icache_misses=3)
     check_counters(dut, ok, 6, 4, 8)
     with pytest.raises(AssertionError, match="coalesced"):

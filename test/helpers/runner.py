@@ -96,6 +96,10 @@ def check_counters(dut, metrics: dict, reads: int, writes: int, consumer_reads: 
         v = _safe_int(sig.value)
         per_core = [(v >> (32 * c)) & 0xFFFFFFFF for c in range(cores)]
         assert metrics[key] == sum(per_core), f"{key} total {metrics[key]} != per-core sum {per_core}"
+    fetches, issues = metrics["icache_hits"] + metrics["icache_misses"], _safe_int(dut.warp_issues_total.value)
+    if _safe_int(dut.WARPS_PER_CORE.value) == 1:   # a yielded warp re-fetches (ADR-014)
+        assert fetches == issues, f"{fetches} I-cache hits + misses != {issues} warp issues"
+    assert _safe_int(dut.ICACHE_LINES.value) or not metrics["icache_hits"], f"{metrics['icache_hits']} hits, no I-cache"
 
 
 @dataclass

@@ -27,7 +27,7 @@ module controller #(
     input  wire [DATA_BITS-1:0]          consumer_write_data    [NUM_CONSUMERS-1:0],
     output reg  [NUM_CONSUMERS-1:0]      consumer_write_ready,
 
-    // Per-consumer priority bit. Scanned first when PRIORITY_ENABLE=1.
+    // Per-consumer priority bit. Reads are scanned first when PRIORITY_ENABLE=1.
     input  wire [NUM_CONSUMERS-1:0]      consumer_priority,
 
     output reg  [NUM_CHANNELS-1:0]       mem_read_valid,
@@ -121,7 +121,8 @@ module controller #(
                                 end
                                 found = 1'b1;
                             end
-                            if (WRITE_ENABLE && !found && can_consider
+                            // Writes skip the priority pass, so one STR's lanes claim channels in lane order (ADR-016).
+                            if (WRITE_ENABLE && !found && (!PRIORITY_ENABLE || pass == 1)
                                 && consumer_write_valid[j] && !channel_serving_consumer[j]) begin
                                 channel_serving_consumer[j] = 1'b1;
                                 current_consumer[i]         <= j[$clog2(NUM_CONSUMERS+1)-1:0];

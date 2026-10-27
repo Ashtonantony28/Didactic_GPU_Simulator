@@ -180,8 +180,8 @@ def test_control_binder_harness_kills_a_pinned_mutant(monkeypatch):
 
 
 def test_control_no_fixture_skipped_at_head_and_bar_mutant_skips():
-    """At HEAD nothing is skipped at W = 2; a model whose BAR releases when any warp arrives makes 7 fixtures
+    """At HEAD nothing is skipped at W = 2; a model whose BAR releases when any warp arrives makes 9 fixtures
     interleaving-dependent, and test_isa_diff would skip them instead of failing."""
     assert _skipped(isasim, 2) == []
     m = _mutant(isasim, "if all(w.bar for w in live):", "if any(w.bar for w in live):")
-    assert len(_skipped(m, 2)) == 7
+    assert len(_skipped(m, 2)) == 9

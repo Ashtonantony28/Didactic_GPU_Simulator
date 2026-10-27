@@ -3,7 +3,7 @@
 ## Status
 Implemented; classification revised in SG19 (below). `src/l1d_cache.sv` is a direct-mapped,
 write-through L1-D shared by every LSU of the GPU (`DCACHE_LINES`); with `MEDIC=1` it classifies each
-LSU lane, bypasses low-utility lanes, and the data controller serves high-utility lanes first.
+LSU lane, bypasses low-utility lanes, and the data controller serves high-utility lanes' reads first.
 
 ## Context
 
@@ -30,7 +30,8 @@ gated). Writes are write-through for every lane.
 
 ### Priority
 The controller (`PRIORITY_ENABLE = MEDIC`) runs two claim passes over its consumers each cycle:
-high-utility lanes first, then the rest.
+high-utility lanes' reads first, then the rest. Writes are claimed in the second pass in lane order, so the highest
+lane of a conflicting `STR` still wins (SG25, ADR-016).
 
 ### Revision (SG19): lanes start high-utility
 

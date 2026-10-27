@@ -8,7 +8,8 @@ import random
 import cocotb
 
 from xf.asm import assemble
-from xf.isasim import IsaSimError, run
+from xf.isa_fixtures import STR_CONFLICT
+from xf.isasim import IsaSimError, run, run_trace
 from xf.tests import test_isasim as cases  # attributes read at test time: test_isasim imports test/ modules
 from .helpers.logger import logger
 from .helpers.runner import data_bus, run_kernel
@@ -61,17 +62,17 @@ def params(dut):
                 simt=bool(int(dut.SIMT_STACK.value)), tpb=int(dut.THREADS_PER_BLOCK.value))
 
 
-def model(dut, prog, data, threads, policy="lrr", **kw):
+def model(dut, prog, data, threads, trace=None, **kw):
     p, (bits, addr) = params(dut), data_bus(dut)
-    return run(prog, data, threads, word_bits=bits, addr_bits=addr, threads_per_block=p["tpb"],
-               warps_per_core=p["warps"], simt=p["simt"], warp_policy=policy, **kw)
+    kw.update(word_bits=bits, addr_bits=addr, threads_per_block=p["tpb"], warps_per_core=p["warps"], simt=p["simt"])
+    return run(prog, data, threads, **kw) if trace is None else run_trace(trace, prog, data, threads, **kw)
 
 
 async def check(dut, prog, data, threads, name):
-    """RTL memory and warp_issues_total equal the model's (which must not depend on the warp interleaving)."""
-    want, gto = model(dut, prog, data, threads), model(dut, prog, data, threads, "gto")
-    assert (want.memory, want.steps) == (gto.memory, gto.steps), f"{name}: model depends on interleaving"
-    _, mem = await run_kernel(dut, prog, data, threads, timeout_cycles=200_000)
+    """RTL memory and warp_issues_total equal the model's; at several warps the model replays the RTL's issue order."""
+    trace = {} if params(dut)["warps"] > 1 else None
+    _, mem = await run_kernel(dut, prog, data, threads, timeout_cycles=200_000, trace=trace)
+    want = model(dut, prog, data, threads, trace=trace)
     bad = [a for a, (g, w) in enumerate(zip(mem.memory, want.memory)) if g != w]
     assert not bad, f"{name}: {len(bad)} words differ, first at {bad[0]}: RTL {mem.memory[bad[0]]}, model {want.memory[bad[0]]}"
     issues = int(dut.warp_issues_total.value)
@@ -131,6 +132,16 @@ async def test_full_stack(dut):
     r = await check(dut, prog, [], 8, "full_stack")
     if p["simt"]:
         assert r.memory[:8] == [1, 3, 6, 10, 15, 15, 15, 15], r.memory[:8]
+
+
+@cocotb.test()
+async def test_str_conflict(dut):
+    """ADR-016: when lanes of one STR hit the same word the highest lane wins, across channel groups at 8 lanes."""
+    p = params(dut)
+    r = await check(dut, assemble(STR_CONFLICT), [], p["tpb"], "str_conflict")
+    assert bool(r.stores_conflict) == (p["tpb"] > p["warps"])   # one lane per warp: no lanes of one STR to conflict
+    if p["warps"] == 1:
+        assert r.memory[0] == p["tpb"] and r.memory[16:16 + p["tpb"]] == [p["tpb"]] * p["tpb"], r.memory[:32]
 
 
 class Structured:

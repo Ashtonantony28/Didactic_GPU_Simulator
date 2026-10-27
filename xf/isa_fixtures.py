@@ -4,7 +4,7 @@
 
 {program, data, threads, params, memory}: `params` are xf.isasim.run keywords and `word_bits` picks the
 build (8: sim.vvp via test_isa_diff, 32: sim_xf.vvp via test_xf_isa_diff). `data` and `memory` omit
-trailing zero words. Cases the model flags as divergent or store-conflicting are not written.
+trailing zero words. Cases the model flags as divergent are not written; store conflicts have a defined winner (ADR-016).
 """
 import argparse
 import asyncio
@@ -24,8 +24,8 @@ WIDTHS = {8: 8, 32: 12}   # word_bits -> addr_bits
 CROSS_BLOCK = {"l1d_later_block8", "l1d_later_block32"}
 EDGE = {8: [0, 1, 7, 8, 9, 127, 128, 255], 32: [0, 31, 32, 33, 2**31 - 1, 2**31, 2**32 - 1]}
 OPS = ("ADD", "SUB", "MUL", "DIV", "SRA", "MAX", "CONST")
-# Every lane of a block stores its thread id to SMEM[0] in one STS; the highest lane wins (docs/isa.md). BAR makes the
-# result independent of the warp interleaving.
+# Every lane of a block stores its thread id to SMEM[0] in one STS; the highest lane wins (docs/isa.md). This pins the
+# lane order at one warp; at more warps the last warp to issue its STS wins, and test_isa_diff replays the RTL's order.
 STS_CONFLICT = """
     MUL R2, %blockIdx, %blockDim
     ADD R2, R2, %threadIdx
@@ -34,6 +34,33 @@ STS_CONFLICT = """
     BAR
     LDS R1, R0
     STR R2, R1
+    RET
+"""
+# One STR per block from every lane to word b, then one from lane pairs to word 8 + 2b + t/2: the highest lane wins
+# (ADR-016). BAR lets every warp's store land before the read-back of both words to 16 + g and 24 + g.
+STR_CONFLICT = """
+    MUL R2, %blockIdx, %blockDim
+    ADD R2, R2, %threadIdx
+    CONST R1, #1
+    ADD R3, R2, R1
+    CONST R0, #0
+    ADD R0, R0, %blockIdx
+    STR R0, R3
+    CONST R4, #2
+    DIV R5, %threadIdx, R4
+    MUL R6, %blockIdx, R4
+    ADD R5, R5, R6
+    CONST R6, #8
+    ADD R5, R5, R6
+    STR R5, R3
+    BAR
+    CONST R7, #16
+    ADD R7, R7, R2
+    LDR R8, R0
+    STR R7, R8
+    ADD R7, R7, R6
+    LDR R8, R5
+    STR R7, R8
     RET
 """
 
@@ -127,6 +154,7 @@ def cases():
     for w in WIDTHS:
         out.update({f"random{w}_{s}": (*straight_line(s, w), w) for s in range(8)})
         out[f"sts_conflict{w}"] = (assemble(STS_CONFLICT), [], 8, w)
+        out[f"str_conflict{w}"] = (assemble(STR_CONFLICT), [], 8, w)
     out.update(_xf_cases())
     return out
 
@@ -137,7 +165,7 @@ def build():
     for name, (prog, data, threads, w) in sorted(cases().items()):
         params = {"word_bits": w, "addr_bits": WIDTHS[w]}
         r = run(prog, data, threads, **params)
-        if r.divergent or r.stores_conflict:
+        if r.divergent:
             skipped.append(name)
             continue
         d = {"program": [int(x) for x in prog], "data": _trim(int(x) & ((1 << w) - 1) for x in data),

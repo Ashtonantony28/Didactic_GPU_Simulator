@@ -39,6 +39,7 @@ thread and go back to the user.
 | SG23 | Benchmarks under latency and multi-warp; docs refresh | SG19, SG20, SG21 | SG23 benchmarks and docs | DONE | [#34](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/34) |
 | SG24 | AUDIT-12 H1–H3: gate coalescing, I-cache counts and STS lane order | SG23 | SG24 coverage gaps | DONE | [#39](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/39) |
 | SG25 | AUDIT-14 H1: global STR conflicts agree in model and RTL | SG24 | SG25 store conflicts | TODO | |
+| SG26 | AUDIT-13 H1–H2: gate SMEM words ≥ 64 and 253–255-thread launches | SG24 | SG26 SMEM and launch limits | TODO | |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -651,6 +652,15 @@ L1 (the lrr == gto interleaving check admits `sts_conflict*` at more than one wa
 Accept: AUDIT-14 H1, L1 and L2 xfails pass; STR-conflict fixtures pass at 8 and 32 bits in every matrix
 config.
 Verify: `NANOGPT_DIR=... make test_all`; `make -j4 matrix`.
+
+### SG26 — AUDIT-13 SMEM and launch limits
+H1: no RTL test touches SMEM words ≥ 64; add ISA fixtures that store and load high SMEM words (and the
+wrap/mask at `SMEM_SIZE`) so mutants SM1/SM2 die. H2: no test launches 253–255 threads; add fixtures and a
+binder test at 253 and 255 threads so dispatcher mutant B02 dies.
+
+Accept: AUDIT-13 mutants SM1, SM2 and B02 are killed by `make test_all` or a matrix config; the H1/H2
+xfails in `xf/tests/test_audit13.py` pass.
+Verify: `NANOGPT_DIR=... make test_all`; `make -j4 matrix`; each mutant rerun from AUDIT-13.md fails.
 
 ### Round 3 audits
 After SG23, separate sessions that wrote none of the code, one lens each: **AUDIT-9 encoding

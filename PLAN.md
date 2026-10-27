@@ -40,6 +40,7 @@ thread and go back to the user.
 | SG24 | AUDIT-12 H1–H3: gate coalescing, I-cache counts and STS lane order | SG23 | SG24 coverage gaps | DONE | [#39](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/39) |
 | SG25 | AUDIT-14 H1: global STR conflicts agree in model and RTL | SG24 | SG25 store conflicts | TODO | |
 | SG26 | AUDIT-13 H1–H2: gate SMEM words ≥ 64 and 253–255-thread launches | SG24 | SG26 SMEM and launch limits | TODO | |
+| SG27 | AUDIT-16 H1, M1: PARAMS that silently build the wrong GPU | SG24 | SG27 PARAMS handling | TODO | |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
@@ -661,6 +662,15 @@ binder test at 253 and 255 threads so dispatcher mutant B02 dies.
 Accept: AUDIT-13 mutants SM1, SM2 and B02 are killed by `make test_all` or a matrix config; the H1/H2
 xfails in `xf/tests/test_audit13.py` pass.
 Verify: `NANOGPT_DIR=... make test_all`; `make -j4 matrix`; each mutant rerun from AUDIT-13.md fails.
+
+### SG27 — AUDIT-16 PARAMS handling
+H1: `PARAMS="-PICACHE_LINES=16"` (unscoped, as the Makefile usage comment shows) builds the default GPU and
+exits 0. Make `compile` fail on any `-P` not scoped to `gpu.`, and fix the usage comment. M1: `make
+test_medic PARAMS=…` (and `bench/run.py --params … medic`) replaces the target's DCACHE_LINES/MEDIC=1
+instead of adding to them; append instead.
+
+Accept: AUDIT-16 H1 and M1 xfails pass; every documented `make`/`bench/run.py` command still runs.
+Verify: `NANOGPT_DIR=... make test_all`; `make -j4 matrix`.
 
 ### Round 3 audits
 After SG23, separate sessions that wrote none of the code, one lens each: **AUDIT-9 encoding

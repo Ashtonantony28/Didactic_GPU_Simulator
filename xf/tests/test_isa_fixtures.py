@@ -11,7 +11,7 @@ FIXTURES = sorted(FIXTURE_DIR.glob("*.json"))
 def test_model_reproduces(path):
     fx = load(path)
     r = run(fx["program"], fx["data"], fx["threads"], **fx["params"])
-    assert not r.divergent and not r.stores_conflict
+    assert not r.divergent
     assert r.memory == fx["memory"] + [0] * (len(r.memory) - len(fx["memory"]))
 
 

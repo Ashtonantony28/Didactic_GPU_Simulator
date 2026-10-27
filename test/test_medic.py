@@ -5,8 +5,8 @@ Threads 2, 3 re-read one hot address each; block 1's sit on other lines and move
 3 iterations, so they miss while block 0's hit. Every iteration every lane write-throughs its running sum. Data memory is slower
 than program memory, so the two cores' requests overlap and the controller has to choose.
 A monitor counts per-lane lookups, installs and bypasses at the L1-D's ports, and checks that a
-bypassed fill leaves no line behind and that the controller never gives a channel to a low-utility
-lane while a high-utility one waits.
+bypassed fill leaves no line behind and that the controller never gives a channel to a write or a
+low-utility read while a high-utility read waits.
 
 `make test_medic` runs this module on the configuration at MEDIC=0 (writing the hot lanes' hit count
 to $MEDIC_BASELINE), then at MEDIC=1 (comparing against it).
@@ -15,8 +15,10 @@ import json
 import os
 import cocotb
 from cocotb.triggers import RisingEdge, ReadOnly
+from xf.asm import assemble
+from xf.isasim import run
 from .helpers.memory import Memory
-from .helpers.runner import MEM_LATENCY, _run, _safe_int, data_bus
+from .helpers.runner import MEM_LATENCY, _run, _safe_int, data_bus, run_kernel
 from .helpers.setup import setup
 from .test_l1d_indepth import encode, ADD, MUL, LDR, STR, CONST, RET, BLOCKIDX, BLOCKDIM, THREADIDX
 
@@ -78,7 +80,7 @@ async def monitor(dut, s):
     def sample():
         a = _safe_int(dut.ctl_read_address.value)
         return dict(rv=_safe_int(dut.ctl_read_valid.value), rr=_safe_int(dut.ctl_read_ready.value),
-                    wv=_safe_int(dut.ctl_write_valid.value), lr=_safe_int(dut.lsu_read_ready.value),
+                    lr=_safe_int(dut.lsu_read_ready.value),
                     hi=_safe_int(dut.warp_high_util.value),
                     srv=_safe_int(dut.data_memory_controller.channel_serving_consumer.value),
                     addr=[(a >> (abits * i)) & ((1 << abits) - 1) for i in range(n)])
@@ -100,7 +102,7 @@ async def monitor(dut, s):
                         _safe_int(l1d.tag_arr[a % lines].value) == a // lines:
                     s["violations"].append((s["cycle"], f"lane {i} installed {a} while low-utility"))
         claimed = cur["srv"] & ~prev["srv"]
-        waiting = (prev["rv"] | prev["wv"]) & ~prev["srv"]
+        waiting = prev["rv"] & ~prev["srv"]   # priority orders reads only (ADR-016)
         hi = prev["hi"]
         if claimed and waiting & ~claimed and waiting & hi and waiting & ~hi:
             s["decided"] += 1
@@ -110,7 +112,7 @@ async def monitor(dut, s):
                         (claimed >> j) & (prev["rv"] >> j) & 1 and prev["addr"][j] == prev["addr"][i]
                         for j in range(i)):
                     claimed &= ~(1 << i)
-        if waiting & hi & ~claimed and claimed & ~hi:
+        if waiting & hi & ~claimed and claimed & ~(hi & prev["rv"]):
             s["violations"].append((s["cycle"], f"{waiting:b}", f"{claimed:b}", f"{hi:b}"))
         s["cycle"] += 1
         prev = cur
@@ -176,3 +178,37 @@ async def test_medic_mixed(dut):
     assert not s["violations"], f"bypass or priority broken: {s['violations'][:4]}"
     if n > channels:
         assert s["decided"], "the controller never chose between high- and low-utility lanes"
+
+
+# Odd lanes re-read one word (high utility), even lanes read a new word each time (low utility), then every lane stores
+# to one word: writes skip the priority pass, so the highest lane still wins (ADR-016).
+STR_AFTER_MIXED = """
+    CONST R1, #1
+    CONST R3, #2
+    DIV R4, %threadIdx, R3
+    MUL R4, R4, R3
+    SUB R4, %threadIdx, R4
+    SUB R4, R1, R4              ; 1 on even lanes
+    CONST R5, #16
+    MUL R6, R4, R5              ; stride: 16 even, 0 odd
+    CONST R7, #64
+    MUL R7, R4, R7
+    ADD R7, R7, %threadIdx
+""" + "    LDR R8, R7\n    ADD R7, R7, R6\n" * 5 + """
+    CONST R0, #200
+    ADD R2, %threadIdx, R1
+    STR R0, R2
+    RET"""
+
+
+@cocotb.test()
+async def test_medic_str_conflict(dut):
+    """Lanes of one STR with mixed utility: the highest lane wins, as in xf.isasim."""
+    tpb = int(dut.THREADS_PER_BLOCK.value)
+    bits, abits = data_bus(dut)
+    prog = assemble(STR_AFTER_MIXED)
+    _, mem = await run_kernel(dut, prog, [], tpb)
+    hi = _safe_int(dut.warp_high_util.value) & ((1 << tpb) - 1)
+    assert hi == sum(1 << t for t in range(1, tpb, 2)), f"lane utility {hi:b}: odd lanes high, even lanes low expected"
+    want = run(prog, [], tpb, word_bits=bits, addr_bits=abits, threads_per_block=tpb).memory[200]
+    assert mem.memory[200] == want == tpb, (mem.memory[200], want)

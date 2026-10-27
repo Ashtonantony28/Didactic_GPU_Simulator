@@ -53,7 +53,11 @@ address, `LDS`/`STS` the low 8.
 | `1001`  | CONST    | `rd ← imm`                                                      |
 | `1101`  | SRA      | `rd ← rs >>> rt`  (signed `rs`, unsigned `rt`; `rt ≥ WORD_BITS` fills with the sign) |
 | `1110`  | MAX      | `rd ← max(rs, rt)`  (signed)                                    |
-| `1111`  | RET      | finish current block (with the SIMT stack: the active lanes)    |
+| `1111`  | RET      | end the issuing warp (with the SIMT stack: its active lanes); the block finishes when all its warps have |
+
+When several lanes of one `STR` write the same word, the highest lane wins: the lanes claim data channels in lane order
+and the memory applies one cycle's channel writes from channel 0 up (ADR-016). `xf.isasim` lists these stores in
+`stores_conflict`; the `str_conflict` ISA fixtures check the rule.
 
 ## Branches and SYNC
 
@@ -97,7 +101,8 @@ upstream — see [ADR-001](decisions/ADR-001-deviations.md).
 SMEM is 64 words per core (`core.SMEM_SIZE`, not a `gpu` parameter), zeroed by the per-block reset;
 addresses are masked to 6 bits.
 When several lanes of one `STS` write the same word, the highest lane wins (`shared_memory.sv` applies the
-lane writes in lane order; ADR-007). The `sts_conflict` ISA fixtures pin this.
+lane writes in lane order; ADR-007). The `sts_conflict` ISA fixtures pin this at one warp; at more warps the last warp
+to issue its `STS` wins, and `test_isa_diff` compares the RTL with a model replay of the RTL's own issue order.
 See [ADR-007](decisions/ADR-007-shared-memory.md) for the design.
 
 ## Assembler

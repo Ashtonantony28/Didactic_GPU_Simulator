@@ -41,9 +41,8 @@ time through FETCH, DECODE, REQUEST, WAIT, EXECUTE, UPDATE.
 - **`WARPS_PER_CORE = 1`.** The FSM keeps today's `UPDATE → FETCH` path, `BAR` is ignored, and no
   warp scheduler is instantiated, so every cycle count is unchanged.
 - **Differential harness.** `test_isa_diff` / `test_xf_isa_diff` run `xf.isasim` with the DUT's
-  `WARPS_PER_CORE`; a fixture is compared only when the model's memory and steps agree under `"lrr"`
-  and `"gto"` (`isa_diff_skipped` logs the rest; none today). `warp_issues_total` must equal the
-  model's steps.
+  `WARPS_PER_CORE`. At more than one warp the model replays the RTL's recorded issue order (SG25, ADR-016).
+  `warp_issues_total` must equal the model's steps.
 
 ## Alternatives rejected
 - Whole-instruction time-sharing without the yield: simpler, but a warp waiting on memory holds the

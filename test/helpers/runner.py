@@ -32,7 +32,7 @@ async def run_kernel(dut, program: List[int], data: List[int], threads: int,
                      program_channels: int = 1,
                      data_addr_bits: Optional[int] = None, data_data_bits: Optional[int] = None,
                      data_channels: int = 4,
-                     mem_latency: int = MEM_LATENCY) -> dict:
+                     mem_latency: int = MEM_LATENCY, trace: Optional[dict] = None) -> dict:
     bits, addr = data_bus(dut)
     data_data_bits = data_data_bits or bits
     data_addr_bits = data_addr_bits or addr
@@ -42,7 +42,7 @@ async def run_kernel(dut, program: List[int], data: List[int], threads: int,
                          data_channels, "data", latency=mem_latency)
 
     await setup(dut, program_memory, program, data_memory, data, threads)
-    return await _run(dut, program_memory, data_memory, threads, timeout_cycles), data_memory
+    return await _run(dut, program_memory, data_memory, threads, timeout_cycles, trace), data_memory
 
 
 def data_bus(dut):
@@ -52,15 +52,21 @@ def data_bus(dut):
 
 
 async def _run(dut, program_memory: Memory, data_memory: Memory, threads: int,
-               timeout_cycles: int) -> dict:
+               timeout_cycles: int, trace: Optional[dict] = None) -> dict:
+    """trace, if given, collects each block's warp issue order ({block: [warp, ...]}, xf.isasim.run_trace)."""
     cycles = 0
     reads0, writes0 = len(data_memory.reads), len(data_memory.writes)
     ready = dut.data_memory_controller.consumer_read_ready
     prev_ready = consumer_reads = 0
+    cores = [dut.cores[c].core_instance for c in range(int(dut.NUM_CORES.value))] if trace is not None else []
     while _safe_int(dut.done.value) != 1:
         data_memory.run()
         program_memory.run()
         await ReadOnly()
+        for c in cores:
+            s = c.scheduler_instance
+            if _safe_int(s.issue.value):
+                trace.setdefault(_safe_int(c.block_id.value), []).append(_safe_int(s.selected_warp.value))
         r = _safe_int(ready.value)
         consumer_reads += bin(r & ~prev_ready).count("1")
         prev_ready = r

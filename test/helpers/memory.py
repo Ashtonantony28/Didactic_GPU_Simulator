@@ -119,7 +119,9 @@ class Memory:
             self.write_in_flight = [write_addrs[i] & ((1 << self.addr_bits) - 1) if write_valids[i] == 1 else None
                                     for i in range(self.channels)]
             wready_out = [0] * self.channels
-            for i in range(self.channels):
+            # Index i is channel channels-1-i (packed bus, MSB first): apply same-cycle writes from channel 0 up so
+            # the highest channel, which the controller gives the highest lane, wins (ADR-016).
+            for i in reversed(range(self.channels)):
                 if write_valids[i] == 1 and self._served_write[i]:
                     pass
                 elif write_valids[i] == 1:

@@ -3,15 +3,16 @@
     run(program, data, threads, word_bits=8, addr_bits=8, ...) -> Result
 
 Each instruction is atomic across a warp: every active lane reads its operands before any lane writes
-registers, NZP, memory or SMEM. Within one STR lanes store in lane order (the last lane wins); within one
-STS the highest lane wins. Blocks run one after another in blockIdx order on one memory, so races
+registers, NZP, memory or SMEM. When lanes of one STR or STS hit the same word the highest lane wins (ADR-016,
+ADR-007); `stores_conflict` lists the STR cases. Blocks run one after another in blockIdx order on one memory, so races
 between blocks (a block reading another block's writes) are out of scope.
 
 simt=False is today's RTL: the warp follows its lowest enabled lane and `divergent` records branches
 where enabled lanes disagree; SYNC (BR with nzp = 000) is a no-op. simt=True is the ADR-011 SIMT stack.
 warps_per_core > 1 splits a block into warps of consecutive lanes that share SMEM and issue one
 instruction at a time: `warp_policy` "lrr" (round-robin, ADR-012) or "gto" (stay on a warp until it
-waits at BAR or finishes, then the lowest ready warp).
+waits at BAR or finishes, then the lowest ready warp). A callable `warp_policy(block, ready)` picks the next warp
+from the ready (not done, not held at BAR) warp indices; `run_trace` uses it to replay a recorded issue order.
 """
 from dataclasses import dataclass, field
 
@@ -47,7 +48,7 @@ def run(program, data, threads, *, word_bits=8, addr_bits=8, threads_per_block=4
         raise ValueError(f"{warps_per_core} warps do not divide {threads_per_block} threads")
     if len(data) > 1 << addr_bits or len(program) > 1 << 8:
         raise ValueError("data or program larger than its memory")
-    if warp_policy not in ("lrr", "gto"):
+    if not callable(warp_policy) and warp_policy not in ("lrr", "gto"):
         raise ValueError(f"unknown warp policy {warp_policy!r}")
 
     def signed(x):
@@ -79,9 +80,12 @@ def run(program, data, threads, *, word_bits=8, addr_bits=8, threads_per_block=4
             if all(w.bar for w in live):
                 for w in live:
                     w.bar = False
-            order = range(cur, cur + warps_per_core) if warp_policy == "lrr" else [cur, *range(warps_per_core)]
-            cur = next(i % warps_per_core for i in order if not warps[i % warps_per_core].done
-                       and not warps[i % warps_per_core].bar)
+            if callable(warp_policy):
+                cur = warp_policy(b, [i for i, w in enumerate(warps) if not w.done and not w.bar])
+            else:
+                order = range(cur, cur + warps_per_core) if warp_policy == "lrr" else [cur, *range(warps_per_core)]
+                cur = next(i % warps_per_core for i in order if not warps[i % warps_per_core].done
+                           and not warps[i % warps_per_core].bar)
             warp = warps[cur]
             if warp_policy == "lrr":
                 cur = (cur + 1) % warps_per_core
@@ -160,3 +164,24 @@ def run(program, data, threads, *, word_bits=8, addr_bits=8, threads_per_block=4
             while len(stack) > 1 and stack[-1][0] == stack[-1][1]:
                 stack.pop()
     return res
+
+
+def run_trace(trace, program, data, threads, **kw):
+    """run() with the warp issue order of each block given as trace = {block: [warp, ...]}, e.g. recorded from the RTL.
+    Raises IsaSimError if the trace picks a warp that is done or held at a BAR, or is shorter or longer than the run."""
+    pos = dict.fromkeys(trace, 0)
+
+    def pick(b, ready):
+        seq, i = trace.get(b, []), pos.get(b, 0)
+        if i >= len(seq):
+            raise IsaSimError(f"block {b}: issue {i} is past the end of the trace")
+        if seq[i] not in ready:
+            raise IsaSimError(f"block {b}: issue {i} picks warp {seq[i]}, ready are {ready}")
+        pos[b] = i + 1
+        return seq[i]
+
+    r = run(program, data, threads, **kw, warp_policy=pick)
+    left = {b: len(s) - pos[b] for b, s in trace.items() if len(s) != pos[b]}
+    if left:
+        raise IsaSimError(f"trace has issues the model never made: {left}")
+    return r

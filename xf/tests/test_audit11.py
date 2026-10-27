@@ -12,8 +12,6 @@ from xf.image import Image
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-11 M1: the Makefile's PARAMS example has unscoped -P switches, "
-                                       "which iverilog ignores without error")
 def test_makefile_params_example_is_scoped():
     line = next(ln for ln in (ROOT / "Makefile").read_text().splitlines() if "PARAMS=\"" in ln and ln.startswith("#"))
     switches = re.findall(r"-P(\S+?)=", line)

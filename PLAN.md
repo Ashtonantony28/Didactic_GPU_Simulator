@@ -40,7 +40,7 @@ thread and go back to the user.
 | SG24 | AUDIT-12 H1–H3: gate coalescing, I-cache counts and STS lane order | SG23 | SG24 coverage gaps | DONE | [#39](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/39) |
 | SG25 | AUDIT-14 H1: global STR conflicts agree in model and RTL | SG24 | SG25 store conflicts | DONE | [#43](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/43) |
 | SG26 | AUDIT-13 H1–H2: gate SMEM words ≥ 64 and 253–255-thread launches | SG24 | SG26 SMEM and launch limits | TODO | |
-| SG27 | AUDIT-16 H1, M1: PARAMS that silently build the wrong GPU | SG24 | SG27 PARAMS handling | TODO | |
+| SG27 | AUDIT-16 H1, M1: PARAMS that silently build the wrong GPU | SG24 | SG27 PARAMS handling | DONE | [#44](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/44) |
 | AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.

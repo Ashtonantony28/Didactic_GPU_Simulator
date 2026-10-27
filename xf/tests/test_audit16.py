@@ -1,5 +1,6 @@
 """AUDIT-16 repros (API/SDK consistency, round 4). Each finding is a strict xfail until fixed; the plain tests are
 controls that pin today's behaviour the findings rely on."""
+import importlib.util
 import re
 import subprocess
 from pathlib import Path
@@ -23,11 +24,20 @@ def _dry_run(target, params=None, tmp="build/a16-dry"):
     return res.returncode, {re.search(r"-o (\S+)", ln)[1]: ln for ln in lines}
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-16 H1 (AUDIT-11 M1 re-rated): the Makefile's documented PARAMS form "
-                                       "-PNAME=V is dropped by iverilog with exit 0; nothing rejects it")
 def test_compile_rejects_unscoped_params():
     rc, _ = _dry_run("compile", "-PICACHE_LINES=16 -PCOALESCE=1")
     assert rc != 0, "make compile accepted unscoped -P switches, which build the default GPU"
+
+
+@pytest.mark.parametrize("target", ["compile", "compile_xf", "test_matadd", "test_xf_bench", "test_medic",
+                                    "multiwarp_w2_lrr", "divergence_w1"])
+@pytest.mark.parametrize("params", ["-PICACHE_LINES=16", "-Pgpu.COALESCE=1 -PICACHE_LINES=16",
+                                    "-Pwarp_scheduler_tb.POLICY=1"])
+def test_every_gpu_build_rejects_unscoped_params(target, params):
+    res = subprocess.run(["make", "-n", target, "BUILD=build/a16-dry", f"PARAMS={params}"],
+                         cwd=ROOT, capture_output=True, text=True)
+    assert res.returncode != 0 and "scope -P switches to gpu." in res.stderr, res.stderr
+    assert not [ln for ln in res.stdout.splitlines() if ln.startswith("iverilog ")]
 
 
 def test_control_scoped_params_reach_iverilog():
@@ -35,12 +45,55 @@ def test_control_scoped_params_reach_iverilog():
     assert rc == 0 and "-Pgpu.ICACHE_LINES=16" in cmds["build/a16-dry/sim.vvp"]
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-16 M1: a PARAMS given to `make test_medic` replaces its "
-                                       "DCACHE_LINES/MEDIC=1 configuration; both runs build MEDIC=0 and pass")
 def test_medic_params_are_appended():
     rc, cmds = _dry_run("test_medic", "-Pgpu.DCACHE_LINES=16")
     assert rc == 0
     assert "-Pgpu.MEDIC=1" in cmds["build/a16-dry/sim.vvp"], cmds
+
+
+def test_medic_params_win_on_shared_names():
+    """PARAMS follow the target's own switches, and iverilog keeps the last -P, so DCACHE_LINES=32 wins."""
+    rc, cmds = _dry_run("test_medic", "-Pgpu.DCACHE_LINES=32 -Pgpu.ICACHE_LINES=16")
+    assert rc == 0
+    for vvp, medic in (("build/a16-dry/sim.vvp", 1), ("build/a16-dry/medic0/sim.vvp", 0)):
+        assert re.search(rf"-Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC={medic} -Pgpu.DCACHE_LINES=32 -Pgpu.ICACHE_LINES=16 ",
+                         cmds[vvp]), cmds
+
+
+def test_iverilog_keeps_the_last_parameter_override(tmp_path):
+    (tmp_path / "t.v").write_text('module gpu #(parameter A = 1) (); initial $display("A=%0d", A); endmodule\n')
+    out = {}
+    for order in ("2 3", "3 2"):
+        a, b = order.split()
+        subprocess.run(["iverilog", "-o", "t.vvp", "-s", "gpu", f"-Pgpu.A={a}", f"-Pgpu.A={b}", "t.v"],
+                       cwd=tmp_path, check=True)
+        out[order] = subprocess.run(["vvp", "t.vvp"], cwd=tmp_path, capture_output=True, text=True).stdout
+    assert "A=3" in out["2 3"] and "A=2" in out["3 2"], out
+
+
+def test_medic_rejects_medic0_in_params():
+    res = subprocess.run(["make", "-n", "test_medic", "BUILD=build/a16-dry", "PARAMS=-Pgpu.MEDIC=0"],
+                         cwd=ROOT, capture_output=True, text=True)
+    assert res.returncode != 0 and "drop MEDIC=0" in res.stderr, res.stderr
+
+
+def test_bench_medic_params_are_appended():
+    """`bench/run.py --params "DCACHE_LINES=16" medic` runs `make test_medic PARAMS=<iv(params)>`."""
+    spec = importlib.util.spec_from_file_location("bench_run", ROOT / "bench" / "run.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    rc, cmds = _dry_run("test_medic", bench.iv("DCACHE_LINES=16"))
+    assert rc == 0
+    assert "-Pgpu.MEDIC=1" in cmds["build/a16-dry/sim.vvp"] and "-Pgpu.MEDIC=0" in cmds["build/a16-dry/medic0/sim.vvp"]
+
+
+def test_matrix_medic_configs_build_medic1():
+    """matrix_medic/matrix_all re-enter test_medic with a full MEDIC=1 PARAMS; the build stays MEDIC=1."""
+    rc, cmds = _dry_run("test_medic", "-Pgpu.ICACHE_LINES=16 -Pgpu.PIPELINED=1 -Pgpu.COALESCE=1 "
+                                      "-Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC=1")
+    assert rc == 0
+    assert cmds["build/a16-dry/sim.vvp"].split()[-2] == "-Pgpu.MEDIC=1"
+    assert cmds["build/a16-dry/medic0/sim.vvp"].split()[-2] == "-Pgpu.MEDIC=0"
 
 
 def test_control_medic_default_params():

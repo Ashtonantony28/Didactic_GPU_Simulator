@@ -63,6 +63,46 @@ STR_CONFLICT = """
     STR R7, R8
     RET
 """
+# Thread t of each block stores g + 1 to SMEM 65t (64..255 wrap to word t) and g + 101 to word 8 + t, then after BAR
+# loads word 3 - t and 459 - t (203 - t at 8 bits; > 255 at 32), which wrap to word 11 - t, and stores both to g and
+# 8 + g. SMEM addresses use the low 8 bits, masked to the 64 words (docs/isa.md).
+SMEM_WRAP = """
+    MUL R2, %blockIdx, %blockDim
+    ADD R2, R2, %threadIdx
+    CONST R0, #64
+    MUL R1, %threadIdx, R0
+    ADD R1, R1, %threadIdx
+    CONST R3, #1
+    ADD R4, R2, R3
+    STS R1, R4
+    CONST R5, #8
+    ADD R6, R5, %threadIdx
+    CONST R3, #101
+    ADD R4, R2, R3
+    STS R6, R4
+    BAR
+    CONST R3, #3
+    SUB R6, R3, %threadIdx
+    LDS R7, R6
+    STR R2, R7
+    CONST R3, #255
+    CONST R4, #204
+    ADD R3, R3, R4
+    SUB R6, R3, %threadIdx
+    LDS R7, R6
+    ADD R2, R2, R5
+    STR R2, R7
+    RET
+"""
+# Thread g stores data[g] + %blockIdx to word g: at 253-255 threads the dispatcher's block count needs 9 bits.
+LAUNCH = """
+    MUL R0, %blockIdx, %blockDim
+    ADD R0, R0, %threadIdx
+    LDR R1, R0
+    ADD R1, R1, %blockIdx
+    STR R0, R1
+    RET
+"""
 
 
 def straight_line(seed, w, threads=8, ops=44):
@@ -155,6 +195,11 @@ def cases():
         out.update({f"random{w}_{s}": (*straight_line(s, w), w) for s in range(8)})
         out[f"sts_conflict{w}"] = (assemble(STS_CONFLICT), [], 8, w)
         out[f"str_conflict{w}"] = (assemble(STR_CONFLICT), [], 8, w)
+        out[f"smem_wrap{w}"] = (assemble(SMEM_WRAP), [], 8, w)
+        for n in (253, 255):
+            rng = random.Random(n)
+            out[f"launch{w}_{n}"] = (assemble(LAUNCH), [rng.choice(EDGE[w]) if rng.random() < 0.5
+                                                        else rng.randrange(1 << w) for _ in range(n)], n, w)
     out.update(_xf_cases())
     return out
 

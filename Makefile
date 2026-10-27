@@ -3,7 +3,8 @@
 
 SRC := $(wildcard src/*.sv)
 
-# Pass parameters via DEFINES, e.g. `make test_matadd PARAMS="-PICACHE_LINES=16 -PCOALESCE=1"`.
+# Pass parameters via PARAMS, e.g. `make test_matadd PARAMS="-Pgpu.ICACHE_LINES=16 -Pgpu.COALESCE=1"`.
+# iverilog drops an unscoped -PNAME=V without error, so compile rejects any -P not scoped to gpu.
 PARAMS ?=
 # Build directory; give each configuration its own so they can run in parallel.
 BUILD ?= build
@@ -25,14 +26,17 @@ gpu_v: $(BUILD)
 	sv2v -w $(BUILD)/gpu.v $(GPU_SRC) 2>/dev/null
 	printf '`timescale 1ns/1ns\n' > $(BUILD)/_ts.v && cat $(BUILD)/_ts.v $(BUILD)/gpu.v > $(BUILD)/gpu_ts.v && mv $(BUILD)/gpu_ts.v $(BUILD)/gpu.v
 
+unscoped = $(filter-out -Pgpu.%,$(filter -P%,$(PARAMS)))
+check_params = $(if $(unscoped),$(error PARAMS: scope -P switches to gpu. as in -Pgpu.NAME=V; got: $(unscoped)))
+
 compile: gpu_v
-	iverilog -o $(BUILD)/sim.vvp -s gpu -g2012 $(PARAMS) $(BUILD)/gpu.v
+	$(check_params)iverilog -o $(BUILD)/sim.vvp -s gpu -g2012 $(PARAMS) $(BUILD)/gpu.v
 
 # Transformer (xf) build: 32-bit words, 4096-word data memory; PARAMS are appended.
 XF_PARAMS := -Pgpu.WORD_BITS=32 -Pgpu.DATA_MEM_DATA_BITS=32 -Pgpu.DATA_MEM_ADDR_BITS=12
 
 compile_xf: gpu_v
-	iverilog -o $(BUILD)/sim_xf.vvp -s gpu -g2012 $(XF_PARAMS) $(PARAMS) $(BUILD)/gpu.v
+	$(check_params)iverilog -o $(BUILD)/sim_xf.vvp -s gpu -g2012 $(XF_PARAMS) $(PARAMS) $(BUILD)/gpu.v
 
 compile_ws: $(BUILD)
 	sv2v -w $(BUILD)/ws.v $(WS_SRC)
@@ -55,8 +59,11 @@ test_warp_scheduler_gtlrr: compile_ws
 	$(call cocotb,test.test_warp_scheduler_$(WS_TEST),$(BUILD)/ws.vvp)
 
 # MeDiC mixed workload: the same configuration at MEDIC=0 (built in $(BUILD)/medic0) sets the hot-lane baseline.
-test_medic: PARAMS = -Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC=1
+# PARAMS are appended to DCACHE_LINES=16 MEDIC=1, so they win on a shared name (iverilog keeps the last -P);
+# MEDIC=0 in PARAMS is an error.
+test_medic: override PARAMS := -Pgpu.DCACHE_LINES=16 -Pgpu.MEDIC=1 $(PARAMS)
 test_medic: compile
+	$(if $(findstring MEDIC=0,$(PARAMS)),$(error test_medic builds MEDIC=0 and MEDIC=1; drop MEDIC=0 from PARAMS))
 	$(MAKE) --no-print-directory BUILD=$(BUILD)/medic0 PARAMS="$(subst MEDIC=1,MEDIC=0,$(PARAMS))" compile
 	export MEDIC_BASELINE=$(BUILD)/medic0/medic.json; $(call cocotb,test.test_medic,$(BUILD)/medic0/sim.vvp)
 	export MEDIC_BASELINE=$(BUILD)/medic0/medic.json; $(call cocotb,test.test_medic,$(BUILD)/sim.vvp)

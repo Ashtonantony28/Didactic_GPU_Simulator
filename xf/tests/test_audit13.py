@@ -81,24 +81,23 @@ def _fixtures_that_differ(mutant):
     return out
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-13 H1: no RTL test uses an SMEM address >= 64 (SM1/SM2 survive)")
 def test_isa_fixtures_pin_smem_wrap():
-    """SM1 (shared_memory.sv writes `mem[lane_write_addr[i]]` unmasked, so STS to 64..255 is dropped) survives every
-    target at default parameters, xf included. The model masks to 64 words (docs/isa.md), but no fixture has an LDS or
-    STS address >= 64, so a model that drops such stores reproduces every fixture."""
+    """SM1 (shared_memory.sv writes `mem[lane_write_addr[i]]` unmasked, so STS to 64..255 is dropped) survived every
+    target at default parameters at 4444c25: no fixture had an LDS or STS address >= 64. The smem_wrap fixtures (SG26)
+    do, at both widths, so a model that drops such stores no longer reproduces them."""
     drop = _mutant(isasim, STS_LOOP, STS_LOOP.replace("& 0xFF & (smem_size - 1), regs", ", regs")
                    .replace("smem[a] = v", "if a < smem_size:\n                        smem[a] = v"))
-    assert _fixtures_that_differ(drop)
+    assert {"smem_wrap8", "smem_wrap32"} <= set(_fixtures_that_differ(drop))
 
 
 # ---- H2: the top of the 8-bit thread range ----------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-13 H2: no RTL test launches 253-255 threads (B02 survives)")
 def test_a_fixture_launches_253_threads_or_more():
-    """B02 (dispatch.sv rounds `thread_count + THREADS_PER_BLOCK - 1` in 8 bits) survives every default-config target:
-    253-255 threads give 0 blocks and the launch ends in 2 cycles with nothing written. The binders accept up to 255
-    threads; the largest ISA fixture launches 144."""
-    assert max(load(p)["threads"] for p in FIXTURE_DIR.glob("*.json")) >= 253
+    """B02 (dispatch.sv rounds `thread_count + THREADS_PER_BLOCK - 1` in 8 bits) survived every default-config target at
+    4444c25: 253-255 threads give 0 blocks and the launch ends in 2 cycles with nothing written. The binders accept up
+    to 255 threads; the launch fixtures (SG26) launch 253 and 255 at both widths."""
+    launched = {(load(p)["params"]["word_bits"], load(p)["threads"]) for p in FIXTURE_DIR.glob("*.json")}
+    assert {(w, n) for w in (8, 32) for n in (253, 255)} <= launched
 
 
 # ---- M1: no test pins a cycle count -----------------------------------------------------------------------------
@@ -180,8 +179,8 @@ def test_control_binder_harness_kills_a_pinned_mutant(monkeypatch):
 
 
 def test_control_no_fixture_skipped_at_head_and_bar_mutant_skips():
-    """At HEAD nothing is skipped at W = 2; a model whose BAR releases when any warp arrives makes 9 fixtures
+    """At HEAD nothing is skipped at W = 2; a model whose BAR releases when any warp arrives makes 11 fixtures
     interleaving-dependent, and test_isa_diff would skip them instead of failing."""
     assert _skipped(isasim, 2) == []
     m = _mutant(isasim, "if all(w.bar for w in live):", "if any(w.bar for w in live):")
-    assert len(_skipped(m, 2)) == 9
+    assert len(_skipped(m, 2)) == 11

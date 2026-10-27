@@ -48,7 +48,9 @@ async def test_requant(dut):
 async def test_relu(dut):
     rng = np.random.default_rng(1)
     img, cases = Image(), []
-    for name, x in (("lo", I8[:128]), ("hi", I8[128:]), ("rand", rng.integers(-128, 128, (4, 16))), ("odd", [-128, 0, 127])):
+    sizes = [("lo", I8[:128]), ("hi", I8[128:]), ("rand", rng.integers(-128, 128, (4, 16))), ("odd", [-128, 0, 127])]
+    sizes += [(f"t{n}", rng.integers(-128, 128, n)) for n in (253, 255)]   # top of the 8-bit thread count (AUDIT-13 H2)
+    for name, x in sizes:
         _seg(img, f"{name}.in", x)
         img.alloc(name, np.shape(x), "i8")
         cases.append((name, ew.relu(img, f"{name}.in", name), golden.relu(x)))

@@ -32,6 +32,9 @@ The address is a register: the LSU passes `rs[7:0]` and the memory masks it to `
   A shared access takes two cycles and never yields the core (ADR-014).
 - **Register file**: `LDS` writes back through `lsu_out`, as `LDR` does.
 - **`shared_memory.sv`**: one read and one write port per lane, combinational read, synchronous write.
+  Write ports apply in lane order, so when lanes of one `STS` hit the same word the highest lane wins
+  (SG24, AUDIT-12 H3). `xf.isasim` does the same, and the `sts_conflict{8,32}` ISA fixtures compare the two.
+  Across warps, the warp that issues its `STS` last wins.
 
 ### BAR
 At `WARPS_PER_CORE = 1` a block is one warp in lockstep, so `BAR` is a no-op. At `WARPS_PER_CORE > 1`

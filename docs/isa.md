@@ -96,6 +96,8 @@ upstream — see [ADR-001](decisions/ADR-001-deviations.md).
 
 SMEM is 64 words per core (`core.SMEM_SIZE`, not a `gpu` parameter), zeroed by the per-block reset;
 addresses are masked to 6 bits.
+When several lanes of one `STS` write the same word, the highest lane wins (`shared_memory.sv` applies the
+lane writes in lane order; ADR-007). The `sts_conflict` ISA fixtures pin this.
 See [ADR-007](decisions/ADR-007-shared-memory.md) for the design.
 
 ## Assembler

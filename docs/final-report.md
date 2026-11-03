@@ -220,6 +220,9 @@ These numbers came from frozen bench files of the phase named and no longer desc
 - GTLRR is not the coordinated fetch/issue scheme of Crouzet et al.; it is greedy with a round-robin
   fallback (ADR-008).
 - The L1-D adds a cycle per access and is write-through; MeDiC classifies per lane (LSU), not per warp.
+- Global stores from different warps to the same word with no `BAR` between them are a race with an
+  unspecified result (ADR-016); the model flags them and the differential tests skip only those words.
+- Open audit findings (medium and low) are listed in `PLAN.md` under "Close-out", each with a repro.
 - Data memory is 256 words at 8 bits (4096 at 32 bits); the 8-bit PC limits programs to 256 words.
 
 ## Reproducibility

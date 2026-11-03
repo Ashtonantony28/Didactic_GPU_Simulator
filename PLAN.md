@@ -42,7 +42,7 @@ thread and go back to the user.
 | SG26 | AUDIT-13 H1–H2: gate SMEM words ≥ 64 and 253–255-thread launches | SG24 | SG26 SMEM and launch limits | DONE | [#45](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/45) |
 | SG27 | AUDIT-16 H1, M1: PARAMS that silently build the wrong GPU | SG24 | SG27 PARAMS handling | DONE | [#44](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/44) |
 | SG28 | AUDIT-18 H1–H2: cross-warp STR races and multi-warp latency coverage | SG25 | SG28 cross-warp stores | DONE | [#50](https://github.com/Ashtonantony28/Didactic_GPU_Simulator/pull/50) |
-| AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | TODO | — |
+| AUD | Audit rounds (AUDIT-<n>.md)            | SG7 (+SG8)      | —              | DONE | AUDIT-1–21 |
 
 SG1 open issue (resolved in SG8): `softmax_lut` rows sum to `one` within T/2 LSB for an arbitrary LUT, and 2 at T=4 is reachable (four equal exps, `one = 126`). The contract stays as is; SG8 keeps the 1 LSB criterion as a property of the exported table, proved by enumerating every reachable row and asserted on every simulated row.
 
@@ -695,6 +695,22 @@ every seeded mutant of the stack and the decoder), **AUDIT-10 performance under 
 consistency** (`xf/` bindings, assembler, `docs/isa.md`, ADRs, Makefile targets), **AUDIT-12 test
 coverage** (mutation). Critical and high findings become SG rows; rounds repeat until one full round has
 none.
+
+### Close-out (2026-11-03)
+Rounds 3–5 (AUDIT-9–20) ran in full; their critical and high findings became SG24–SG28, all merged.
+Round 5 still had highs (AUDIT-18), so by the owner's instruction to stop at a reasonable end point the
+loop ended with **AUDIT-21**, a final audit scoped to SG28 across all four lenses: no critical or high
+findings. A full sixth round was not run. Medium and low findings stay open, each with a strict-xfail
+repro in `xf/tests/test_audit<n>.py`; the mediums:
+
+- AUDIT-10 M1: the fixed claim order starves cores 2–3 without the I-cache (4 cores ≈ 2 cores).
+- AUDIT-10 M2: the shared L1-D can install a stale value when a fill and a write-through race.
+- AUDIT-10 M3: `make -j4 matrix` is about 53–64 min, over its 60-minute budget.
+- AUDIT-12 M1–M3, AUDIT-13 M1: GTLRR in the core, the contract-8 tolerances, the MeDiC threshold and
+  cycle counts are not pinned by a gating test.
+- AUDIT-20 M1–M2: `-Pgpu.` switches iverilog ignores still pass the scope check; `bench/run.py --params`
+  double-prefixes the Makefile form.
+- AUDIT-21 M1: `memory_diff` skips a raced word without checking it holds a legal outcome.
 
 ## Audit
 

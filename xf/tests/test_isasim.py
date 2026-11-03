@@ -245,6 +245,69 @@ def test_store_conflict():
     assert r.stores_conflict == [(0, 1, 0)]
 
 
+
+# Every lane stores t + 1 to word 0; lane t copies word 0 to 8 + t, and via R5 and SMEM to 16 + t; 24 + t gets 1.
+RACE = assemble("""
+    CONST R0, #0
+    CONST R1, #1
+    ADD R2, %threadIdx, R1
+    STR R0, R2
+    BAR
+    LDR R3, R0
+    ADD R5, R3, R1
+    STS %threadIdx, R5
+    LDS R6, %threadIdx
+    CONST R4, #8
+    ADD R4, R4, %threadIdx
+    STR R4, R3
+    CONST R4, #16
+    ADD R4, R4, %threadIdx
+    STR R4, R6
+    CONST R4, #24
+    ADD R4, R4, %threadIdx
+    STR R4, R1
+    RET
+""")
+
+
+@pytest.mark.parametrize("policy", ["lrr", "gto"])
+def test_store_races(policy):
+    """Cross-warp STRs to one word race (docs/isa.md); one warp's lanes do not. race_words follows the raced value
+    through LDR, ALU, STS/LDS and STR, and no further. Stores of one value never race."""
+    assert not run(RACE, [], 4).store_races and not run(RACE, [], 4).race_words
+    for w in (2, 4):
+        r = run(RACE, [], 4, warps_per_core=w, warp_policy=policy)
+        assert r.store_races == [(0, 3, 0)] and r.stores_conflict == ([(0, 3, 0)] * 2 if w == 2 else [])
+        assert r.race_words == {0, *range(8, 12), *range(16, 20)}, sorted(r.race_words)
+    same = assemble("CONST R0, #0\nCONST R1, #7\nSTR R0, R1\nRET")
+    assert not run(same, [], 4, warps_per_core=4).race_words
+
+
+def test_store_race_bar_separated():
+    """A BAR starts a new epoch: a store after it clears the race, and warps storing in turn never race."""
+    prog = assemble("CONST R0, #0\nSTR R0, %threadIdx\nBAR\nCONST R1, #5\nSTR R0, R1\nRET")
+    r = run(prog, [], 4, warps_per_core=2)
+    assert r.store_races == [(0, 1, 0)] and not r.race_words and r.memory[0] == 5
+    # Warp w (lanes 2w, 2w + 1) stores to word 0 in round w, to 4 + t otherwise.
+    turns = assemble("""
+        CONST R0, #0
+        CONST R1, #2
+        DIV R2, %threadIdx, R1
+        CONST R3, #4
+        ADD R3, R3, %threadIdx
+        MUL R4, R2, R3
+        STR R4, %threadIdx
+        BAR
+        CONST R5, #1
+        SUB R5, R5, R2
+        MUL R4, R5, R3
+        STR R4, %threadIdx
+        RET""")
+    for policy in ("lrr", "gto"):
+        r = run(turns, [], 4, warps_per_core=2, warp_policy=policy)
+        assert not r.store_races and not r.race_words and r.memory[:8] == [3, 0, 0, 0, 0, 1, 2, 3], r.memory[:8]
+
+
 M1 = """
     {sync}
     CONST R1, #0

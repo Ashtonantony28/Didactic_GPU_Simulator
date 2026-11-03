@@ -1,5 +1,6 @@
-"""AUDIT-18 repros (encoding soundness, round 5). Strict xfails mark findings open at e9c9eef; the controls check the
-machinery the repros rely on. RTL-side numbers come from build/a18 runs recorded in AUDIT-18.md (no simulator here).
+"""AUDIT-18 repros (encoding soundness, round 5). H1, H2 and M1 were strict xfails at e9c9eef and pass since SG28; the
+controls check the machinery the repros rely on. RTL-side numbers come from build/a18 runs recorded in AUDIT-18.md (no
+simulator here; test/test_cross_warp.py runs H1 on the RTL).
 """
 import re
 from types import SimpleNamespace
@@ -69,6 +70,7 @@ H1_KW = dict(threads_per_block=8, warps_per_core=2)
 H1_TRACE = {0: [int(c) for c in "010101010101010010110010101010101010100010100101101"],
             1: [int(c) for c in "0101010101010001010101011100101010101100000011010101010011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010100011101010101111"]}
 H1_RTL_WORD100 = 8   # RTL data memory word 100 (and 140..147) after the run
+H1_RTL_DIFF = [100, *range(140, 148)]   # the 9 words where the RTL and this replay differ (AUDIT-18 H1)
 
 
 def _h1_replay():
@@ -82,12 +84,14 @@ def test_h1_recorded_order_is_legal_and_issue_order_picks_warp0():
     assert r.stores_conflict and r.memory[100] == 4 and r.memory[140:148] == [4] * 8
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-18 H1: RTL applies warp 1's later-claimed STR last (8), model 4")
-def test_h1_model_matches_rtl_on_recorded_order():
-    assert _h1_replay().memory[100] == H1_RTL_WORD100
+def test_h1_race_flagged_and_excluded():
+    """SG28: the two warps' STRs to word 100 race (docs/isa.md), so the replay flags them, and every word where the RTL
+    differed (100 and its read-backs 140..147) is a race word that the differential tests leave out."""
+    r = _h1_replay()
+    assert r.store_races == [(0, 35, 100)] and sorted(r.race_words) == H1_RTL_DIFF
+    assert r.memory[100] != H1_RTL_WORD100 and set(H1_RTL_DIFF) <= r.race_words
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-18 H1: docs/isa.md states no cross-warp STR rule")
 def test_h1_isa_md_states_cross_warp_str_rule():
     text = (ROOT / "docs" / "isa.md").read_text()
     para = text[text.index("When several lanes of one `STR`"):]
@@ -113,8 +117,6 @@ def test_matrix_parse_control():
     assert "-Pgpu.ICACHE_LINES=16" in m["all"][0]
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-18 H2: H1 needs WARPS_PER_CORE > 1 with latency/I-cache; no matrix "
-                                       "config has both, so make matrix passes the H1 RTL")
 def test_h2_matrix_has_multiwarp_with_latency_or_icache():
     assert any("WARPS_PER_CORE" in cfg and ("MEM_LATENCY" in env or "ICACHE_LINES" in cfg)
                for cfg, env in _matrix().values())
@@ -147,8 +149,6 @@ def test_memory_model_same_cycle_read_sees_old_value():
     assert m.memory[7] == 9 and (dut.data_mem_read_data.value >> 8) & 0xFF == 5
 
 
-@pytest.mark.xfail(strict=True, reason="AUDIT-18 M1: ADR-016 does not state the read-before-write and in-order "
-                                       "completion assumptions the STR rule and cross-warp order rest on")
 def test_m1_adr016_states_memory_ordering_assumptions():
     adr = (ROOT / "docs" / "decisions" / "ADR-016-str-conflicts.md").read_text().lower()
     assert re.search(r"read[^.]*before[^.]*write|write[^.]*after[^.]*read", adr) and "latency" in adr

@@ -8,11 +8,10 @@ import random
 import cocotb
 
 from xf.asm import assemble
-from xf.isa_fixtures import STR_CONFLICT
 from xf.isasim import IsaSimError, run, run_trace
 from xf.tests import test_isasim as cases  # attributes read at test time: test_isasim imports test/ modules
 from .helpers.logger import logger
-from .helpers.runner import data_bus, run_kernel
+from .helpers.runner import data_bus, memory_diff, run_kernel
 
 SEEDS = 16
 IN, OUT, SLOTS, MAX_THREADS = 0, 32, 8, 24   # input word per thread at IN + g; thread g owns OUT + 8g .. OUT + 8g + 7
@@ -73,7 +72,7 @@ async def check(dut, prog, data, threads, name):
     trace = {} if params(dut)["warps"] > 1 else None
     _, mem = await run_kernel(dut, prog, data, threads, timeout_cycles=200_000, trace=trace)
     want = model(dut, prog, data, threads, trace=trace)
-    bad = [a for a, (g, w) in enumerate(zip(mem.memory, want.memory)) if g != w]
+    bad = memory_diff(name, mem.memory, want)
     assert not bad, f"{name}: {len(bad)} words differ, first at {bad[0]}: RTL {mem.memory[bad[0]]}, model {want.memory[bad[0]]}"
     issues = int(dut.warp_issues_total.value)
     assert issues == want.steps, f"{name}: warp_issues_total {issues} != model steps {want.steps}"
@@ -134,14 +133,33 @@ async def test_full_stack(dut):
         assert r.memory[:8] == [1, 3, 6, 10, 15, 15, 15, 15], r.memory[:8]
 
 
+# Every lane of warp w stores t + 1 to word w (one STR, so the highest lane of the warp wins, ADR-016); after BAR lane
+# t reads its warp's word back to 16 + t. No two warps store to one word, so there is no race (docs/isa.md).
+WARP_STR_CONFLICT = """
+    CONST R1, #1
+    ADD R3, %threadIdx, R1
+    CONST R4, #{lanes}
+    DIV R0, %threadIdx, R4
+    STR R0, R3
+    BAR
+    CONST R7, #16
+    ADD R7, R7, %threadIdx
+    LDR R8, R0
+    STR R7, R8
+    RET
+"""
+
+
 @cocotb.test()
 async def test_str_conflict(dut):
-    """ADR-016: when lanes of one STR hit the same word the highest lane wins, across channel groups at 8 lanes."""
+    """ADR-016: when lanes of one STR hit the same word the highest lane of the warp wins, across channel groups at
+    8 lanes per warp."""
     p = params(dut)
-    r = await check(dut, assemble(STR_CONFLICT), [], p["tpb"], "str_conflict")
-    assert bool(r.stores_conflict) == (p["tpb"] > p["warps"])   # one lane per warp: no lanes of one STR to conflict
-    if p["warps"] == 1:
-        assert r.memory[0] == p["tpb"] and r.memory[16:16 + p["tpb"]] == [p["tpb"]] * p["tpb"], r.memory[:32]
+    lanes = p["tpb"] // p["warps"]
+    r = await check(dut, assemble(WARP_STR_CONFLICT.format(lanes=lanes)), [], p["tpb"], "str_conflict")
+    assert bool(r.stores_conflict) == (lanes > 1) and not r.store_races, (r.stores_conflict, r.store_races)
+    want = [(t // lanes + 1) * lanes for t in range(p["tpb"])]
+    assert r.memory[:p["warps"]] == want[::lanes] and r.memory[16:16 + p["tpb"]] == want, r.memory[:32]
 
 
 class Structured:

@@ -36,16 +36,14 @@ STS_CONFLICT = """
     STR R2, R1
     RET
 """
-# One STR per block from every lane to word b, then one from lane pairs to word 8 + 2b + t/2: the highest lane wins
-# (ADR-016). BAR lets every warp's store land before the read-back of both words to 16 + g and 24 + g.
+# One STR from lane pairs to word 8 + 2b + t/2: the highest lane wins (ADR-016). A pair is one warp up to two lanes
+# per warp; at one lane per warp it is two warps' STRs, a race (docs/isa.md) that test_isa_diff leaves out. BAR lets
+# every store land before the read-back to 24 + g.
 STR_CONFLICT = """
     MUL R2, %blockIdx, %blockDim
     ADD R2, R2, %threadIdx
     CONST R1, #1
     ADD R3, R2, R1
-    CONST R0, #0
-    ADD R0, R0, %blockIdx
-    STR R0, R3
     CONST R4, #2
     DIV R5, %threadIdx, R4
     MUL R6, %blockIdx, R4
@@ -54,11 +52,8 @@ STR_CONFLICT = """
     ADD R5, R5, R6
     STR R5, R3
     BAR
-    CONST R7, #16
+    CONST R7, #24
     ADD R7, R7, R2
-    LDR R8, R0
-    STR R7, R8
-    ADD R7, R7, R6
     LDR R8, R5
     STR R7, R8
     RET

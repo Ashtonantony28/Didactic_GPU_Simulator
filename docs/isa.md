@@ -57,7 +57,11 @@ address, `LDS`/`STS` the low 8.
 
 When several lanes of one `STR` write the same word, the highest lane wins: the lanes claim data channels in lane order
 and the memory applies one cycle's channel writes from channel 0 up (ADR-016). `xf.isasim` lists these stores in
-`stores_conflict`; the `str_conflict` ISA fixtures check the rule.
+`stores_conflict`; the `str_conflict` ISA fixtures check the rule. Between warps there is no such order: `STR`s from
+two warps of a block to one word with no `BAR` between them race, and the word's value is unspecified, as on real GPUs
+(a warp's store lanes can wait for a channel while another warp's later store claims one first; AUDIT-18 H1). Separate
+such stores with a `BAR`. `xf.isasim` lists the racing stores that can change a word in `store_races`, and the words
+whose final value depends on them in `race_words`; the RTL comparisons leave those words out (ADR-016).
 
 ## Branches and SYNC
 

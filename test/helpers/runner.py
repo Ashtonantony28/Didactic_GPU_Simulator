@@ -51,6 +51,21 @@ def data_bus(dut):
     return len(dut.data_mem_read_data) // channels, len(dut.data_mem_read_address) // channels
 
 
+MAX_RACED = 16
+
+
+def memory_diff(name, rtl, model, raced=()):
+    """Words where RTL and model (an xf.isasim Result) data memory differ, leaving out model.race_words: a cross-warp
+    STR race leaves them unspecified (docs/isa.md). The caller names every raced word, so the set left out is explicit
+    and small."""
+    assert len(raced) <= MAX_RACED, f"{name}: {len(raced)} raced words, at most {MAX_RACED}"
+    assert model.race_words == set(raced), \
+        f"{name}: raced words {sorted(model.race_words)}, expected {sorted(raced)} (races {model.store_races})"
+    if raced:
+        logger.info(f"{name}: not compared (STR race): {sorted(raced)}")
+    return [a for a, (g, w) in enumerate(zip(rtl, model.memory)) if g != w and a not in model.race_words]
+
+
 async def _run(dut, program_memory: Memory, data_memory: Memory, threads: int,
                timeout_cycles: int, trace: Optional[dict] = None) -> dict:
     """trace, if given, collects each block's warp issue order ({block: [warp, ...]}, xf.isasim.run_trace)."""

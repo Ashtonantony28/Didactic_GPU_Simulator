@@ -2,8 +2,9 @@
 
 The model runs with the DUT's WARPS_PER_CORE, and with simt=True at SIMT_STACK=1. At WARPS_PER_CORE > 1 the model
 replays the warp issue order the RTL recorded (xf.isasim.run_trace), which must pick only ready warps, so fixtures whose
-result depends on the interleaving (sts_conflict, str_conflict) are compared too (AUDIT-14 L1). warp_issues_total must
-equal the model's steps.
+result depends on the interleaving (sts_conflict) are compared too (AUDIT-14 L1). warp_issues_total must
+equal the model's steps. Words a cross-warp STR race leaves unspecified (docs/isa.md) are not compared; only
+str_conflict's lane pairs race, at one lane per warp (RACED).
 """
 from enum import Enum
 
@@ -11,7 +12,10 @@ import cocotb
 
 from xf.isa_fixtures import FIXTURE_DIR, load
 from xf.isasim import run, run_trace
-from .helpers.runner import data_bus, run_kernel
+from .helpers.runner import data_bus, memory_diff, run_kernel
+
+# str_conflict at one lane per warp: each lane pair (words 8-11) is two warps' STRs; 24-31 read them back.
+RACED = {f"str_conflict{w}": set(range(8, 12)) | set(range(24, 32)) for w in (8, 32)}
 
 
 def diff_test(word_bits):
@@ -35,7 +39,8 @@ def diff_test(word_bits):
         r = run_trace(trace, *args, **kw) if warps > 1 else run(*args, **kw)
         if warps == 1:
             assert r.memory[:len(fx["memory"])] == fx["memory"], f"{case}: model no longer reproduces the fixture"
-        bad = [a for a, (g, w) in enumerate(zip(mem.memory, r.memory)) if g != w]
+        lanes = int(dut.THREADS_PER_BLOCK.value) // warps
+        bad = memory_diff(case, mem.memory, r, RACED.get(case, ()) if lanes == 1 else ())
         assert not bad, (f"{case}: {len(bad)} words differ, first at {bad[0]}: RTL {mem.memory[bad[0]]:#x}, "
                          f"model {r.memory[bad[0]]:#x}")
         issues = int(dut.warp_issues_total.value)

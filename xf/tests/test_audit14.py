@@ -156,7 +156,7 @@ def test_store_conflict_model_matches_rtl():
     model applied same-cycle channel writes from the top channel down. Since SG25 it applies them from channel 0 up and
     writes skip MeDiC's priority pass, so one STR's lanes reach the channels in lane order and the highest lane wins
     (ADR-016), as in xf.isasim. test_isa_diff runs str_conflict{8,32} on the RTL in every matrix configuration and
-    test_divergence runs xf.isa_fixtures.STR_CONFLICT at 8 lanes."""
+    test_divergence runs a warp-wide STR conflict at 8 lanes."""
     assert isasim.run(assemble(STR_CONFLICT), [], 4).memory[100] == 4
     for w in (8, 32):
         fx = load(FIXTURE_DIR / f"str_conflict{w}.json")

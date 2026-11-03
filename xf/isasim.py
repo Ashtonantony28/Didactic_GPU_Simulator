@@ -4,7 +4,10 @@
 
 Each instruction is atomic across a warp: every active lane reads its operands before any lane writes
 registers, NZP, memory or SMEM. When lanes of one STR or STS hit the same word the highest lane wins (ADR-016,
-ADR-007); `stores_conflict` lists the STR cases. Blocks run one after another in blockIdx order on one memory, so races
+ADR-007); `stores_conflict` lists the STR cases. STRs of different values from two warps of a block to one word with
+no BAR between them race and leave the word unspecified (docs/isa.md): `store_races` lists the STR that makes a word
+raced, and `race_words` holds the words whose final value depends on a race (raced, or stored from a value read from
+one; dependence through branches is not tracked). Blocks run one after another in blockIdx order on one memory, so races
 between blocks (a block reading another block's writes) are out of scope.
 
 simt=False is today's RTL: the warp follows its lowest enabled lane and `divergent` records branches
@@ -29,6 +32,26 @@ class Result:
     steps: int = 0
     divergent: list = field(default_factory=list)        # (block, pc), simt=False only
     stores_conflict: list = field(default_factory=list)  # (block, pc, addr)
+    store_races: list = field(default_factory=list)      # (block, pc, addr), cross-warp STR races
+    race_words: set = field(default_factory=set)
+
+
+def _taint(op, rd, rs, rt, lanes, regs, reg_t, smem_t, mem_t, amask, smask):
+    """Carry race taint through one instruction before it runs: reg_t[t] bit r marks lane t's register r."""
+    for t in lanes:
+        ts, tt = reg_t[t] >> rs & 1, reg_t[t] >> rt & 1
+        if op == 0b1000:
+            (mem_t.add if ts or tt else mem_t.discard)(regs[t][rs] & amask)
+        elif op == 0b1011:
+            (smem_t.add if ts or tt else smem_t.discard)(regs[t][rs] & smask)
+        elif rd < 13 and op in (0b0011, 0b0100, 0b0101, 0b0110, 0b0111, 0b1001, 0b1010, 0b1101, 0b1110):
+            if op == 0b0111:
+                tt = regs[t][rs] & amask in mem_t
+            elif op == 0b1010:
+                tt = regs[t][rs] & smask in smem_t
+            elif op == 0b1001:
+                ts = tt = 0
+            reg_t[t] = reg_t[t] & ~(1 << rd) | bool(ts or tt) << rd
 
 
 class _Warp:
@@ -70,6 +93,7 @@ def run(program, data, threads, *, word_bits=8, addr_bits=8, threads_per_block=4
         n = min(tpb, threads - b * tpb)
         regs = [[0] * 13 + [b & wmask, tpb & wmask, t & wmask] for t in range(tpb)]
         nzp, smem = [0] * tpb, [0] * smem_size
+        reg_t, smem_t, stored = [0] * tpb, set(), {}   # stored: word -> (warps, values) since the last BAR
         warps = [_Warp(sum(1 << t for t in range(w * lanes_per_warp, min((w + 1) * lanes_per_warp, n))))
                  for w in range(warps_per_core)]
         cur = 0
@@ -78,6 +102,7 @@ def run(program, data, threads, *, word_bits=8, addr_bits=8, threads_per_block=4
             if not live:
                 break
             if all(w.bar for w in live):
+                stored.clear()
                 for w in live:
                     w.bar = False
             if callable(warp_policy):
@@ -86,7 +111,8 @@ def run(program, data, threads, *, word_bits=8, addr_bits=8, threads_per_block=4
                 order = range(cur, cur + warps_per_core) if warp_policy == "lrr" else [cur, *range(warps_per_core)]
                 cur = next(i % warps_per_core for i in order if not warps[i % warps_per_core].done
                            and not warps[i % warps_per_core].bar)
-            warp = warps[cur]
+            wid = cur
+            warp = warps[wid]
             if warp_policy == "lrr":
                 cur = (cur + 1) % warps_per_core
             res.steps += 1
@@ -100,6 +126,8 @@ def run(program, data, threads, *, word_bits=8, addr_bits=8, threads_per_block=4
             word = prog[pc]
             op, rd, rs, rt, imm = word >> 12, (word >> 8) & 15, (word >> 4) & 15, word & 15, word & 0xFF
             top[0] = (pc + 1) & PC_MASK
+            if res.store_races:
+                _taint(op, rd, rs, rt, lanes, regs, reg_t, smem_t, res.race_words, amask, 0xFF & (smem_size - 1))
 
             if op in alu:
                 f = alu[op]
@@ -124,6 +152,14 @@ def run(program, data, threads, *, word_bits=8, addr_bits=8, threads_per_block=4
                         clash.add(a)
                         res.stores_conflict.append((b, pc, a))
                     seen[a] = mem[a] = v
+                    ws, vs = stored.setdefault(a, (set(), set()))
+                    raced = len(ws) > 1 and len(vs) > 1
+                    ws.add(wid)
+                    vs.add(v)
+                    if len(ws) > 1 and len(vs) > 1:
+                        if not raced:
+                            res.store_races.append((b, pc, a))
+                        res.race_words.add(a)
             elif op == 0b1011:                     # STS
                 for a, v in [(regs[t][rs] & 0xFF & (smem_size - 1), regs[t][rt]) for t in lanes]:
                     smem[a] = v

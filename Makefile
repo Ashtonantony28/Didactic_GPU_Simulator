@@ -1,5 +1,5 @@
 # tiny-gpu-extended Makefile
-.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf test_all require_nanogpt matrix matrix_run clean bench bench_clean harness_selftest test_multiwarp multiwarp_% test_divergence divergence_run simt_fatal_run
+.PHONY: gpu_v compile compile_xf test_% test_xf_% regression regression_xf test_all require_nanogpt matrix matrix_run clean bench bench_clean harness_selftest test_multiwarp multiwarp_% test_divergence divergence_run simt_fatal_run test_cross_warp
 
 SRC := $(wildcard src/*.sv)
 
@@ -116,6 +116,11 @@ simt_fatal_run:
 	  && grep -q "msg: simt_stack: .*$(FATAL_MSG)" $(BUILD)/fatal_$(SIMT_FATAL).log && echo "simt_fatal $(SIMT_FATAL): OK" \
 	  || { tail -n 20 $(BUILD)/fatal_$(SIMT_FATAL).log; echo "simt_fatal $(SIMT_FATAL): FAILED"; exit 1; }
 
+# The AUDIT-18 H1 build (matrix config warps2lat), whatever PARAMS say.
+test_cross_warp:
+	@$(MAKE) --no-print-directory BUILD=$(BUILD)/cross_warp PARAMS="$(CFG_warps2lat)" compile >/dev/null
+	export $(ENV_warps2lat); $(call cocotb,test.test_cross_warp,$(BUILD)/cross_warp/sim.vvp)
+
 test_xf_%: compile_xf
 	$(call cocotb,test.test_xf_$*,$(BUILD)/sim_xf.vvp)
 
@@ -142,9 +147,9 @@ regression_xf: compile_xf
 # isa_fixtures --check.
 # The held-out tolerance checks need torch and NANOGPT_DIR, so test_all fails rather than skips them.
 test_all: require_nanogpt compile compile_xf
-	@$(call suite,$(BUILD)/sim.vvp,$(filter-out $(XF_TESTS) $(WS_TESTS) test_medic,$(TESTS)))
+	@$(call suite,$(BUILD)/sim.vvp,$(filter-out $(XF_TESTS) $(WS_TESTS) test_medic test_cross_warp,$(TESTS)))
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(XF_TESTS))
-	@for t in $(WS_TESTS) test_medic harness_selftest; do $(MAKE) --no-print-directory $$t || exit 1; done
+	@for t in $(WS_TESTS) test_medic test_cross_warp harness_selftest; do $(MAKE) --no-print-directory $$t || exit 1; done
 	XF_REQUIRE_NANOGPT=1 python3 -m pytest xf/tests -q
 	python3 -m xf.export --check
 	python3 -m xf.isa_fixtures --check
@@ -157,7 +162,7 @@ require_nanogpt:
 # configuration, each in build/matrix/<cfg>;
 # test_medic too where MEDIC=1.
 # `make -j4 matrix` runs configurations in parallel.
-MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency warps2 warps4gto simt
+MATRIX := default icache pipelined coalesce dcache medic all cores1 cores4 latency warps2 warps4gto simt warps2lat
 CFG_icache    := -Pgpu.ICACHE_LINES=16
 CFG_pipelined := -Pgpu.PIPELINED=1
 CFG_coalesce  := -Pgpu.COALESCE=1
@@ -176,17 +181,24 @@ XF_warps4gto  := $(filter-out test_xf_attention test_xf_mlp_block test_xf_bench,
 CFG_simt      := -Pgpu.SIMT_STACK=1
 T8_simt       := divergence
 XF_simt       := $(XF_warps4gto)
+# AUDIT-18 H1/H2: several warps with latency and the I-cache. l1d_indepth, isa_diff and multiwarp assume 4 threads per
+# block, so test_divergence (RTL vs the model's replay) and test_cross_warp (STRs under contention) take their place.
+CFG_warps2lat := -Pgpu.THREADS_PER_BLOCK=8 -Pgpu.WARPS_PER_CORE=2 $(CFG_icache) $(CFG_pipelined)
+ENV_warps2lat := MEM_LATENCY=10
+T_warps2lat   := $(addprefix test_,$(REGRESSION) controller divergence cross_warp)
+# The other xf modules assume 4 threads per block or run for minutes at L10; these two keep the 32-bit build covered.
+XF_warps2lat  := test_xf_controller test_xf_elementwise
 
 matrix: $(addprefix matrix_,$(MATRIX))
 	@echo "matrix: OK"
 
 matrix_%:
 	@mkdir -p build/matrix/$*
-	@$(ENV_$*) $(MAKE) --no-print-directory BUILD=build/matrix/$* PARAMS="$(CFG_$*)" MATRIX_XF="$(XF_$*)" MATRIX_T8="$(T8_$*)" matrix_run > build/matrix/$*/log.txt 2>&1 \
+	@$(ENV_$*) $(MAKE) --no-print-directory BUILD=build/matrix/$* PARAMS="$(CFG_$*)" MATRIX_XF="$(XF_$*)" MATRIX_T8="$(T8_$*)" MATRIX_T="$(T_$*)" matrix_run > build/matrix/$*/log.txt 2>&1 \
 	  && echo "matrix $*: OK" || { tail -n 30 build/matrix/$*/log.txt; echo "matrix $*: FAILED (build/matrix/$*/log.txt)"; exit 1; }
 
 matrix_run: compile compile_xf
-	@$(call suite,$(BUILD)/sim.vvp,$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff controller $(or $(MATRIX_T8),multiwarp)))
+	@$(call suite,$(BUILD)/sim.vvp,$(or $(MATRIX_T),$(addprefix test_,$(REGRESSION) l1d_indepth isa_diff controller $(or $(MATRIX_T8),multiwarp))))
 	@$(call suite,$(BUILD)/sim_xf.vvp,$(addprefix test_,$(REGRESSION)) $(or $(MATRIX_XF),$(XF_TESTS)))
 	@$(if $(findstring MEDIC=1,$(PARAMS)),$(MAKE) --no-print-directory test_medic)
 
